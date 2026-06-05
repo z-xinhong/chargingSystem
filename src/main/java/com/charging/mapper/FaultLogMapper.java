@@ -1,9 +1,9 @@
 package com.charging.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.charging.entity.ChargingRequest;
+import com.charging.entity.FaultLog;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface ChargingRequestMapper extends BaseMapper<ChargingRequest> {
+public interface FaultLogMapper extends BaseMapper<FaultLog> {
 }

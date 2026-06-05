@@ -1,3 +1,7 @@
+package com.charging.dto;
+
+import lombok.Data;
+
 @Data
 public class LoginDTO {
     private String username;
