@@ -123,6 +123,52 @@
 - 快充桩 3 个：`F1`、`F2`、`F3`，功率 30 度/小时
 - 慢充桩 2 个：`T1`、`T2`，功率 10 度/小时
 
+## 数据库同步方式
+
+MySQL 数据库只存在每个成员自己的本地环境中，不需要把真实数据库文件提交到项目里。项目中只提交建库、建表和初始化数据的 SQL 脚本。
+
+当前数据库脚本位置：
+
+```text
+sql/charging_system.sql
+```
+
+该脚本会完成：
+
+- 创建数据库 `charging_system`
+- 创建系统需要的 7 张表
+- 初始化 5 个充电桩数据
+
+组员拉取项目后，可以在本地 MySQL 中执行：
+
+```bash
+mysql -u root -p < sql/charging_system.sql
+```
+
+也可以进入 MySQL 命令行后执行。注意路径需要换成自己电脑上的项目实际路径：
+
+```sql
+source 你的项目路径/sql/charging_system.sql;
+```
+
+例如项目放在 `D:/projects/chargingSystem`，则执行：
+
+```sql
+source D:/projects/chargingSystem/sql/charging_system.sql;
+```
+
+执行完成后，每个成员根据自己的本地 MySQL 密码修改：
+
+```text
+src/main/resources/application.yml
+```
+
+只需要保证数据库名统一为：
+
+```text
+charging_system
+```
+
 ## 接口约定
 
 统一返回格式：
