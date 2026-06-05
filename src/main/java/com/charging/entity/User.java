@@ -1,5 +1,10 @@
 package com.charging.entity;
 
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
 @Data
 @TableName("user")
 public class User {
@@ -9,4 +14,5 @@ public class User {
     private String phone;
     private Double batteryCapacity;
     private String role;
+    private LocalDateTime createdAt;
 }
