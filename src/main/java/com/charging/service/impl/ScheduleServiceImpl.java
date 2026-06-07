@@ -5,18 +5,24 @@ import com.charging.common.Result;
 import com.charging.entity.ChargingPile;
 import com.charging.entity.ChargingRequest;
 import com.charging.entity.PileQueue;
+import com.charging.entity.User;
 import com.charging.entity.WaitingQueue;
 import com.charging.mapper.ChargingPileMapper;
 import com.charging.mapper.ChargingRequestMapper;
 import com.charging.mapper.PileQueueMapper;
+import com.charging.mapper.UserMapper;
 import com.charging.mapper.WaitingQueueMapper;
 import com.charging.service.ScheduleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ScheduleServiceImpl implements ScheduleService {
@@ -35,22 +41,75 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Autowired
     private ChargingRequestMapper chargingRequestMapper;
 
+    @Autowired
+    private UserMapper userMapper;
+
     @Override
     @Transactional
     public Result dispatch(String policy) {
-        String normalizedPolicy = policy == null || policy.isBlank() ? "BATCH_SHORTEST" : policy;
+        String normalizedPolicy = normalizePolicy(policy, "BATCH_SHORTEST");
+        List<Map<String, Object>> assignedVehicles = dispatchInternal(normalizedPolicy);
+        return Result.success(assignedVehicles.size());
+    }
 
+    @Override
+    @Transactional
+    public Result dispatchOnce() {
+        List<Map<String, Object>> assignedVehicles = dispatchInternal("SINGLE_SHORTEST");
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("dispatchType", "ONCE");
+        data.put("assignedVehicles", assignedVehicles);
+        return Result.success(data);
+    }
+
+    @Override
+    @Transactional
+    public Result dispatchBatch() {
+        List<Map<String, Object>> assignedVehicles = dispatchInternal("BATCH_SHORTEST");
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("dispatchType", "BATCH");
+        data.put("assignedVehicles", assignedVehicles);
+        return Result.success(data);
+    }
+
+    @Override
+    public Result snapshot() {
+        Map<String, Object> snapshot = new HashMap<>();
+        snapshot.put("waitingArea", buildWaitingArea());
+        snapshot.put("piles", buildPiles());
+        snapshot.put("pileQueues", buildPileQueues());
+        snapshot.put("pausedCalling", false);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("snapshot", snapshot);
+        return Result.success(data);
+    }
+
+    @Override
+    public Result waitingQueue() {
+        return Result.success(buildWaitingArea());
+    }
+
+    @Override
+    public Result pileQueue() {
+        return Result.success(buildPileQueues());
+    }
+
+    private List<Map<String, Object>> dispatchInternal(String policy) {
         QueryWrapper<WaitingQueue> wrapper = new QueryWrapper<>();
         wrapper.orderByAsc("position_no");
         List<WaitingQueue> waitingQueues = waitingQueueMapper.selectList(wrapper);
 
-        if ("PRIORITY".equalsIgnoreCase(normalizedPolicy)) {
+        if ("PRIORITY".equalsIgnoreCase(policy)) {
             waitingQueues.sort(Comparator.comparing((WaitingQueue item) -> !"FAST".equalsIgnoreCase(item.getMode()))
                     .thenComparing(WaitingQueue::getPositionNo, Comparator.nullsLast(Integer::compareTo)));
         }
 
-        int dispatchLimit = "SINGLE_SHORTEST".equalsIgnoreCase(normalizedPolicy) ? 1 : waitingQueues.size();
+        int dispatchLimit = "SINGLE_SHORTEST".equalsIgnoreCase(policy) ? 1 : waitingQueues.size();
         int dispatchedCount = 0;
+        List<Map<String, Object>> assignedVehicles = new ArrayList<>();
 
         for (WaitingQueue waitingQueue : waitingQueues) {
             if (dispatchedCount >= dispatchLimit) {
@@ -85,24 +144,78 @@ public class ScheduleServiceImpl implements ScheduleService {
             }
 
             waitingQueueMapper.deleteById(waitingQueue.getId());
+
+            Map<String, Object> assigned = new HashMap<>();
+            assigned.put("queueNumber", request.getQueueNumber());
+            assigned.put("userId", request.getUserId());
+            assigned.put("from", "WAITING_AREA");
+            assigned.put("toPileId", targetPile.getId());
+            assigned.put("estimatedFinishMinutes", estimateFinishMinutes(targetPile, request));
+            assignedVehicles.add(assigned);
+
             dispatchedCount++;
         }
 
-        return Result.success(dispatchedCount);
+        return assignedVehicles;
     }
 
-    @Override
-    public Result waitingQueue() {
+    private List<Map<String, Object>> buildWaitingArea() {
         QueryWrapper<WaitingQueue> wrapper = new QueryWrapper<>();
         wrapper.orderByAsc("mode", "position_no");
-        return Result.success(waitingQueueMapper.selectList(wrapper));
+        List<WaitingQueue> waitingQueues = waitingQueueMapper.selectList(wrapper);
+
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (WaitingQueue waitingQueue : waitingQueues) {
+            ChargingRequest request = chargingRequestMapper.selectById(waitingQueue.getRequestId());
+            User user = request == null ? null : userMapper.selectById(request.getUserId());
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("queueNumber", waitingQueue.getQueueNumber());
+            item.put("userId", request == null ? null : request.getUserId());
+            item.put("mode", waitingQueue.getMode());
+            item.put("batteryCapacity", user == null ? null : user.getBatteryCapacity());
+            item.put("requestedKwh", request == null ? null : request.getRequestedKwh());
+            item.put("waitingMinutes", 0);
+            data.add(item);
+        }
+        return data;
     }
 
-    @Override
-    public Result pileQueue() {
+    private List<Map<String, Object>> buildPiles() {
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (ChargingPile pile : chargingPileMapper.selectList(null)) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("pileId", pile.getId());
+            item.put("name", pile.getPileCode() + ("FAST".equalsIgnoreCase(pile.getType()) ? " 快充桩" : " 慢充桩"));
+            item.put("type", pile.getType());
+            item.put("status", pile.getStatus());
+            item.put("power", pile.getPower());
+            data.add(item);
+        }
+        return data;
+    }
+
+    private Map<String, List<Map<String, Object>>> buildPileQueues() {
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
         wrapper.orderByAsc("pile_id", "position_no");
-        return Result.success(pileQueueMapper.selectList(wrapper));
+        List<PileQueue> queues = pileQueueMapper.selectList(wrapper);
+
+        Map<String, List<Map<String, Object>>> data = new LinkedHashMap<>();
+        for (PileQueue queue : queues) {
+            ChargingRequest request = chargingRequestMapper.selectById(queue.getRequestId());
+            ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("queueNumber", request == null ? null : request.getQueueNumber());
+            item.put("userId", request == null ? null : request.getUserId());
+            item.put("mode", request == null ? null : request.getMode());
+            item.put("requestedKwh", request == null ? null : request.getRequestedKwh());
+            item.put("status", queue.getStatus());
+            item.put("estimatedFinishMinutes", pile == null || request == null ? 0 : estimateFinishMinutes(pile, request));
+
+            data.computeIfAbsent(String.valueOf(queue.getPileId()), key -> new ArrayList<>()).add(item);
+        }
+        return data;
     }
 
     private ChargingPile findShortestAvailablePile(String mode) {
@@ -160,5 +273,17 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
 
         return totalHours;
+    }
+
+    private int estimateFinishMinutes(ChargingPile pile, ChargingRequest request) {
+        if (request.getRequestedKwh() == null) {
+            return 0;
+        }
+        double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
+        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+    }
+
+    private String normalizePolicy(String policy, String defaultPolicy) {
+        return policy == null || policy.isBlank() ? defaultPolicy : policy;
     }
 }

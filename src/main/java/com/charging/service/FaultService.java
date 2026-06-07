@@ -5,5 +5,7 @@ import com.charging.common.Result;
 public interface FaultService {
     Result simulate(Long pileId, String schedulePolicy, String remark);
 
-    Result recover(Long pileId);
+    Result dispatchFault(Long pileId, String schedulePolicy);
+
+    Result recover(Long pileId, String schedulePolicy);
 }

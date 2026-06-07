@@ -25,8 +25,17 @@ public class FaultController {
         return faultService.simulate(pileId, schedulePolicy, remark);
     }
 
+    @PostMapping("/dispatch/{pileId}")
+    public Result dispatch(@PathVariable Long pileId,
+                           @RequestBody(required = false) FaultSimulateDTO dto) {
+        String schedulePolicy = dto == null ? null : dto.getSchedulePolicy();
+        return faultService.dispatchFault(pileId, schedulePolicy);
+    }
+
     @PostMapping("/recover/{pileId}")
-    public Result recover(@PathVariable Long pileId) {
-        return faultService.recover(pileId);
+    public Result recover(@PathVariable Long pileId,
+                          @RequestBody(required = false) FaultSimulateDTO dto) {
+        String schedulePolicy = dto == null ? null : dto.getSchedulePolicy();
+        return faultService.recover(pileId, schedulePolicy);
     }
 }

@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 public class Bill {
     private Long id;
     private Long requestId;
+    private Long pileId;
     private Double actualKwh;
     private Double durationHours;
     private BigDecimal electricityFee;

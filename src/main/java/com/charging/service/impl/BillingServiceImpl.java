@@ -62,33 +62,20 @@ public class BillingServiceImpl implements BillingService {
             return Result.error("已取消的充电请求不能结束充电");
         }
 
-        ChargingPile pile = findPileByRequest(request.getId());
-        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
-                ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
-                : pile.getPower();
-        double actualKwh = roundDouble(request.getRequestedKwh() == null ? 0 : request.getRequestedKwh());
-        double durationHours = roundDouble(actualKwh / power);
-
-        BigDecimal kwh = BigDecimal.valueOf(actualKwh);
-        BigDecimal electricityFee = kwh.multiply(currentElectricityPrice()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal serviceFee = kwh.multiply(SERVICE_PRICE).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal totalFee = electricityFee.add(serviceFee).setScale(2, RoundingMode.HALF_UP);
-
-        Bill bill = new Bill();
-        bill.setRequestId(request.getId());
-        bill.setActualKwh(actualKwh);
-        bill.setDurationHours(durationHours);
-        bill.setElectricityFee(electricityFee);
-        bill.setServiceFee(serviceFee);
-        bill.setTotalFee(totalFee);
-        bill.setCreatedAt(LocalDateTime.now());
-        billMapper.insert(bill);
-
-        request.setStatus("COMPLETED");
-        chargingRequestMapper.updateById(request);
-        finishPileQueue(request.getId(), pile);
-
+        Bill bill = createBillAndFinishRequest(request);
         return Result.success(toBillResponse(bill));
+    }
+
+    @Override
+    @Transactional
+    public Long generateFaultBill(Long requestId) {
+        ChargingRequest request = chargingRequestMapper.selectById(requestId);
+        if (request == null || "COMPLETED".equals(request.getStatus()) || "CANCELLED".equals(request.getStatus())) {
+            return null;
+        }
+
+        Bill bill = createBillAndFinishRequest(request);
+        return bill.getId();
     }
 
     @Override
@@ -134,6 +121,36 @@ public class BillingServiceImpl implements BillingService {
         return null;
     }
 
+    private Bill createBillAndFinishRequest(ChargingRequest request) {
+        ChargingPile pile = findPileByRequest(request.getId());
+        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
+                ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
+                : pile.getPower();
+        double actualKwh = roundDouble(request.getRequestedKwh() == null ? 0 : request.getRequestedKwh());
+        double durationHours = roundDouble(actualKwh / power);
+
+        BigDecimal kwh = BigDecimal.valueOf(actualKwh);
+        BigDecimal electricityFee = kwh.multiply(currentElectricityPrice()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal serviceFee = kwh.multiply(SERVICE_PRICE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalFee = electricityFee.add(serviceFee).setScale(2, RoundingMode.HALF_UP);
+
+        Bill bill = new Bill();
+        bill.setRequestId(request.getId());
+        bill.setPileId(pile == null ? null : pile.getId());
+        bill.setActualKwh(actualKwh);
+        bill.setDurationHours(durationHours);
+        bill.setElectricityFee(electricityFee);
+        bill.setServiceFee(serviceFee);
+        bill.setTotalFee(totalFee);
+        bill.setCreatedAt(LocalDateTime.now());
+        billMapper.insert(bill);
+
+        request.setStatus("COMPLETED");
+        chargingRequestMapper.updateById(request);
+        finishPileQueue(request.getId(), pile);
+        return bill;
+    }
+
     private ChargingPile findPileByRequest(Long requestId) {
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
         wrapper.eq("request_id", requestId).last("limit 1");
@@ -152,6 +169,8 @@ public class BillingServiceImpl implements BillingService {
             long remaining = pileQueueMapper.selectCount(remainingWrapper);
             pile.setStatus(remaining > 0 ? "CHARGING" : "IDLE");
             pile.setTotalChargeCount((pile.getTotalChargeCount() == null ? 0 : pile.getTotalChargeCount()) + 1);
+            pile.setTotalChargeTime((pile.getTotalChargeTime() == null ? 0 : pile.getTotalChargeTime()));
+            pile.setTotalChargeKwh((pile.getTotalChargeKwh() == null ? 0 : pile.getTotalChargeKwh()));
             chargingPileMapper.updateById(pile);
         }
     }
@@ -180,6 +199,7 @@ public class BillingServiceImpl implements BillingService {
         Map<String, Object> data = new HashMap<>();
         data.put("billId", bill.getId());
         data.put("requestId", bill.getRequestId());
+        data.put("pileId", bill.getPileId());
         data.put("actualKwh", bill.getActualKwh());
         data.put("durationHours", bill.getDurationHours());
         data.put("electricityFee", bill.getElectricityFee());

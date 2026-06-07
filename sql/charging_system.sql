@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS user (
   username VARCHAR(50) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
   phone VARCHAR(20),
+  plate_no VARCHAR(20),
   battery_capacity DOUBLE NOT NULL,
   role VARCHAR(20) DEFAULT 'USER',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS charging_request (
 CREATE TABLE IF NOT EXISTS bill (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   request_id BIGINT NOT NULL,
+  pile_id BIGINT,
   actual_kwh DOUBLE NOT NULL,
   duration_hours DOUBLE,
   electricity_fee DECIMAL(10,2),

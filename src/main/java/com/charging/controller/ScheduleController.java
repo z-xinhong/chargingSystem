@@ -21,6 +21,21 @@ public class ScheduleController {
         return scheduleService.dispatch(policy);
     }
 
+    @GetMapping("/snapshot")
+    public Result snapshot() {
+        return scheduleService.snapshot();
+    }
+
+    @PostMapping("/dispatch-once")
+    public Result dispatchOnce() {
+        return scheduleService.dispatchOnce();
+    }
+
+    @PostMapping("/dispatch-batch")
+    public Result dispatchBatch() {
+        return scheduleService.dispatchBatch();
+    }
+
     @GetMapping("/waiting")
     public Result waitingQueue() {
         return scheduleService.waitingQueue();

@@ -9,4 +9,6 @@ public interface BillingService {
     Result list(Integer page, Integer size, Long userId);
 
     Result detail(Long billId, Long userId);
+
+    Long generateFaultBill(Long requestId);
 }

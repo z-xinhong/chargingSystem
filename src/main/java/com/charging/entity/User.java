@@ -12,6 +12,7 @@ public class User {
     private String username;
     private String password;
     private String phone;
+    private String plateNo;
     private Double batteryCapacity;
     private String role;
     private LocalDateTime createdAt;
