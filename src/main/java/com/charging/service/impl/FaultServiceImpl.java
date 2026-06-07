@@ -98,6 +98,12 @@ public class FaultServiceImpl implements FaultService {
             pileQueueMapper.updateById(queue);
         }
 
+        ChargingPile latestPile = chargingPileMapper.selectById(pileId);
+        if (latestPile != null) {
+            latestPile.setStatus("FAULT");
+            chargingPileMapper.updateById(latestPile);
+        }
+
         Map<String, Object> data = new HashMap<>();
         data.put("faultPileId", pileId);
         data.put("schedulePolicy", policy);
