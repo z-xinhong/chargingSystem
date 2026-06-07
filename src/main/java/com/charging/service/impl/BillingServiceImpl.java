@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,14 +56,12 @@ public class BillingServiceImpl implements BillingService {
         if (access != null) {
             return access;
         }
-        if ("COMPLETED".equals(request.getStatus())) {
-            return Result.error("该充电请求已结束");
-        }
-        if ("CANCELLED".equals(request.getStatus())) {
-            return Result.error("已取消的充电请求不能结束充电");
+        PileQueue currentQueue = findPileQueue(request.getId());
+        if (currentQueue == null || !"CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
+            return Result.error("只有正在充电的请求才能结束充电");
         }
 
-        Bill bill = createBillAndFinishRequest(request);
+        Bill bill = createBillAndFinishRequest(request, currentQueue);
         return Result.success(toBillResponse(bill));
     }
 
@@ -74,7 +73,12 @@ public class BillingServiceImpl implements BillingService {
             return null;
         }
 
-        Bill bill = createBillAndFinishRequest(request);
+        PileQueue currentQueue = findPileQueue(request.getId());
+        if (currentQueue == null || !"CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
+            return null;
+        }
+
+        Bill bill = createBillAndFinishRequest(request, currentQueue);
         return bill.getId();
     }
 
@@ -82,19 +86,28 @@ public class BillingServiceImpl implements BillingService {
     public Result list(Integer page, Integer size, Long userId) {
         int currentPage = page == null || page < 1 ? 1 : page;
         int pageSize = size == null || size < 1 ? 10 : size;
+        List<Long> requestIds = selectUserRequestIds(userId);
+
+        if (requestIds.isEmpty()) {
+            Map<String, Object> emptyData = new HashMap<>();
+            emptyData.put("page", currentPage);
+            emptyData.put("size", pageSize);
+            emptyData.put("total", 0L);
+            emptyData.put("records", Collections.emptyList());
+            return Result.success(emptyData);
+        }
 
         QueryWrapper<Bill> wrapper = new QueryWrapper<>();
-        wrapper.orderByDesc("created_at");
+        wrapper.in("request_id", requestIds).orderByDesc("created_at");
         Page<Bill> billPage = billMapper.selectPage(new Page<>(currentPage, pageSize), wrapper);
         List<Map<String, Object>> records = billPage.getRecords().stream()
-                .filter(bill -> belongsToUser(bill, userId))
                 .map(this::toBillResponse)
                 .collect(Collectors.toList());
 
         Map<String, Object> data = new HashMap<>();
         data.put("page", currentPage);
         data.put("size", pageSize);
-        data.put("total", records.size());
+        data.put("total", billPage.getTotal());
         data.put("records", records);
         return Result.success(data);
     }
@@ -118,11 +131,17 @@ public class BillingServiceImpl implements BillingService {
         if (!request.getUserId().equals(userId)) {
             return Result.error("无权访问该充电请求");
         }
+        if ("COMPLETED".equals(request.getStatus())) {
+            return Result.error("该充电请求已结束");
+        }
+        if ("CANCELLED".equals(request.getStatus())) {
+            return Result.error("已取消的充电请求不能结束充电");
+        }
         return null;
     }
 
-    private Bill createBillAndFinishRequest(ChargingRequest request) {
-        ChargingPile pile = findPileByRequest(request.getId());
+    private Bill createBillAndFinishRequest(ChargingRequest request, PileQueue currentQueue) {
+        ChargingPile pile = chargingPileMapper.selectById(currentQueue.getPileId());
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
@@ -136,7 +155,7 @@ public class BillingServiceImpl implements BillingService {
 
         Bill bill = new Bill();
         bill.setRequestId(request.getId());
-        bill.setPileId(pile == null ? null : pile.getId());
+        bill.setPileId(pile == null ? currentQueue.getPileId() : pile.getId());
         bill.setActualKwh(actualKwh);
         bill.setDurationHours(durationHours);
         bill.setElectricityFee(electricityFee);
@@ -147,32 +166,60 @@ public class BillingServiceImpl implements BillingService {
 
         request.setStatus("COMPLETED");
         chargingRequestMapper.updateById(request);
-        finishPileQueue(request.getId(), pile);
+
+        pileQueueMapper.deleteById(currentQueue.getId());
+        reindexPileQueue(currentQueue.getPileId());
+        updatePileStatistics(pile, durationHours, actualKwh);
         return bill;
     }
 
-    private ChargingPile findPileByRequest(Long requestId) {
+    private PileQueue findPileQueue(Long requestId) {
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
         wrapper.eq("request_id", requestId).last("limit 1");
-        PileQueue queue = pileQueueMapper.selectOne(wrapper);
-        return queue == null ? null : chargingPileMapper.selectById(queue.getPileId());
+        return pileQueueMapper.selectOne(wrapper);
     }
 
-    private void finishPileQueue(Long requestId, ChargingPile pile) {
+    private void reindexPileQueue(Long pileId) {
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
-        wrapper.eq("request_id", requestId);
-        pileQueueMapper.delete(wrapper);
+        wrapper.eq("pile_id", pileId).orderByAsc("position_no", "id");
+        List<PileQueue> queues = pileQueueMapper.selectList(wrapper);
 
-        if (pile != null) {
-            QueryWrapper<PileQueue> remainingWrapper = new QueryWrapper<>();
-            remainingWrapper.eq("pile_id", pile.getId());
-            long remaining = pileQueueMapper.selectCount(remainingWrapper);
-            pile.setStatus(remaining > 0 ? "CHARGING" : "IDLE");
-            pile.setTotalChargeCount((pile.getTotalChargeCount() == null ? 0 : pile.getTotalChargeCount()) + 1);
-            pile.setTotalChargeTime((pile.getTotalChargeTime() == null ? 0 : pile.getTotalChargeTime()));
-            pile.setTotalChargeKwh((pile.getTotalChargeKwh() == null ? 0 : pile.getTotalChargeKwh()));
-            chargingPileMapper.updateById(pile);
+        for (int i = 0; i < queues.size(); i++) {
+            PileQueue queue = queues.get(i);
+            String status = i == 0 ? "CHARGING" : "WAITING";
+            queue.setPositionNo(i + 1);
+            queue.setStatus(status);
+            pileQueueMapper.updateById(queue);
+
+            ChargingRequest request = chargingRequestMapper.selectById(queue.getRequestId());
+            if (request != null && !"COMPLETED".equals(request.getStatus()) && !"CANCELLED".equals(request.getStatus())) {
+                request.setStatus(status);
+                chargingRequestMapper.updateById(request);
+            }
         }
+    }
+
+    private void updatePileStatistics(ChargingPile pile, double durationHours, double actualKwh) {
+        if (pile == null) {
+            return;
+        }
+
+        QueryWrapper<PileQueue> remainingWrapper = new QueryWrapper<>();
+        remainingWrapper.eq("pile_id", pile.getId());
+        long remaining = pileQueueMapper.selectCount(remainingWrapper);
+        pile.setStatus(remaining > 0 ? "CHARGING" : "IDLE");
+        pile.setTotalChargeCount((pile.getTotalChargeCount() == null ? 0 : pile.getTotalChargeCount()) + 1);
+        pile.setTotalChargeTime(roundDouble((pile.getTotalChargeTime() == null ? 0 : pile.getTotalChargeTime()) + durationHours));
+        pile.setTotalChargeKwh(roundDouble((pile.getTotalChargeKwh() == null ? 0 : pile.getTotalChargeKwh()) + actualKwh));
+        chargingPileMapper.updateById(pile);
+    }
+
+    private List<Long> selectUserRequestIds(Long userId) {
+        QueryWrapper<ChargingRequest> requestWrapper = new QueryWrapper<>();
+        requestWrapper.eq("user_id", userId).select("id");
+        return chargingRequestMapper.selectList(requestWrapper).stream()
+                .map(ChargingRequest::getId)
+                .collect(Collectors.toList());
     }
 
     private boolean belongsToUser(Bill bill, Long userId) {
