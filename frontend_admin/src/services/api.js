@@ -22,8 +22,7 @@ export const simulateFault = (pileId, schedulePolicy) =>
 export const getSchedulingSnapshot = () => get('/schedule/snapshot');
 export const dispatchOnce = (payload) => post('/schedule/dispatch-once', payload);
 export const dispatchBatch = (payload) => post('/schedule/dispatch-batch', payload);
-export const recoverPile = (pileId, schedulePolicy = 'TIME_ORDER') =>
-  post(`/fault/recover/${pileId}`, { schedulePolicy });
+export const recoverPile = (pileId) => post(`/fault/recover/${pileId}`, { schedulePolicy: 'TIME_ORDER' });
 export const getReports = (period = 'DAY') => get(`/report/list?period=${period}`);
 export const getVehicles = (keyword = '') => get(`/vehicle/list?keyword=${encodeURIComponent(keyword)}`);
 export const saveVehicle = (payload) => post('/vehicle/save', payload);

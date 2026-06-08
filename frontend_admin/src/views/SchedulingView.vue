@@ -22,8 +22,8 @@
           <div class="vehicle-list">
             <article class="vehicle-chip" v-for="car in waitingArea" :key="car.queueNumber">
               <strong>{{ car.queueNumber }}</strong>
-              <span>{{ formatMode(car.mode) }} · {{ car.requestedKwh }} 度</span>
-              <small>用户 {{ car.userId }} · 已等 {{ car.waitingMinutes }} 分钟</small>
+              <span>{{ formatMode(car.mode) }} · 所需 {{ car.requestedKwh ?? '-' }} 度</span>
+              <small>预计充电 {{ car.requiredChargeMinutes ?? '-' }} 分钟 · 用户 {{ car.userId }}</small>
             </article>
           </div>
         </section>
@@ -50,6 +50,12 @@
                   <template v-if="queueFor(pile.pileId)[slot - 1]">
                     <strong>{{ queueFor(pile.pileId)[slot - 1].queueNumber }}</strong>
                     <span>{{ slot === 1 ? '充电中' : '等待' }}</span>
+                    <small v-if="queueFor(pile.pileId)[slot - 1].status === 'CHARGING'">
+                      剩 {{ queueFor(pile.pileId)[slot - 1].remainingKwh ?? '-' }} 度 / {{ queueFor(pile.pileId)[slot - 1].remainingMinutes ?? '-' }} 分钟
+                    </small>
+                    <small v-else>
+                      需 {{ queueFor(pile.pileId)[slot - 1].requestedKwh ?? '-' }} 度 / {{ queueFor(pile.pileId)[slot - 1].requiredChargeMinutes ?? '-' }} 分钟
+                    </small>
                   </template>
                   <template v-else>
                     <span>空位</span>
@@ -104,13 +110,6 @@
           恢复充电桩 ID
           <input v-model.number="recoverForm.pileId" min="1" type="number" />
         </label>
-        <label>
-          恢复调度策略
-          <select v-model="recoverForm.schedulePolicy">
-            <option value="TIME_ORDER">时间顺序调度</option>
-            <option value="PRIORITY">优先级调度</option>
-          </select>
-        </label>
       </div>
       <p class="muted-text">恢复后若其它同类型充电桩仍有未充电车辆，则暂停等候区叫号，合并后重新调度。</p>
     </section>
@@ -157,7 +156,7 @@ const waitingArea = ref(mockWaitingArea);
 const pileQueues = ref(mockPileQueues);
 
 const faultForm = reactive({ pileId: 3, schedulePolicy: 'PRIORITY' });
-const recoverForm = reactive({ pileId: 3, schedulePolicy: 'TIME_ORDER' });
+const recoverForm = reactive({ pileId: 3 });
 
 const callingPaused = computed(() => piles.value.some((pile) => pile.status === 'FAULT'));
 
@@ -179,7 +178,7 @@ async function handleFault() {
 async function handleRecover() {
   message.value = '';
   try {
-    await recoverPile(recoverForm.pileId, recoverForm.schedulePolicy);
+    await recoverPile(recoverForm.pileId);
     message.value = '故障恢复调度请求已提交';
     await loadSnapshot();
   } catch (error) {

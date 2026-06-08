@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collections;
@@ -56,6 +57,7 @@ public class BillingServiceImpl implements BillingService {
         if (access != null) {
             return access;
         }
+
         PileQueue currentQueue = findPileQueue(request.getId());
         if (currentQueue == null || !"CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
             return Result.error("只有正在充电的请求才能结束充电");
@@ -75,6 +77,28 @@ public class BillingServiceImpl implements BillingService {
 
         PileQueue currentQueue = findPileQueue(request.getId());
         if (currentQueue == null || !"CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
+            return null;
+        }
+
+        Bill bill = createBillAndFinishRequest(request, currentQueue);
+        return bill.getId();
+    }
+
+    @Override
+    @Transactional
+    public Long completeIfFullyCharged(Long requestId) {
+        ChargingRequest request = chargingRequestMapper.selectById(requestId);
+        if (request == null || !"CHARGING".equalsIgnoreCase(request.getStatus())) {
+            return null;
+        }
+
+        PileQueue currentQueue = findPileQueue(request.getId());
+        if (currentQueue == null || !"CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
+            return null;
+        }
+
+        ChargingPile pile = chargingPileMapper.selectById(currentQueue.getPileId());
+        if (!isFullyCharged(request, pile)) {
             return null;
         }
 
@@ -242,7 +266,27 @@ public class BillingServiceImpl implements BillingService {
         return !time.isBefore(LocalTime.of(startHour, 0)) && time.isBefore(LocalTime.of(endHour, 0));
     }
 
+    private boolean isFullyCharged(ChargingRequest request, ChargingPile pile) {
+        if (request.getCreatedAt() == null || request.getRequestedKwh() == null || request.getRequestedKwh() <= 0) {
+            return false;
+        }
+
+        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
+                ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
+                : pile.getPower();
+        long elapsedMinutes = Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).toMinutes());
+        long requiredMinutes = Math.max(1L, (long) Math.ceil(request.getRequestedKwh() / power * 60));
+        return elapsedMinutes >= requiredMinutes;
+    }
+
     private Map<String, Object> toBillResponse(Bill bill) {
+        LocalDateTime endTime = bill.getCreatedAt();
+        LocalDateTime startTime = null;
+        if (endTime != null && bill.getDurationHours() != null) {
+            long durationMinutes = Math.max(1L, Math.round(bill.getDurationHours() * 60));
+            startTime = endTime.minusMinutes(durationMinutes);
+        }
+
         Map<String, Object> data = new HashMap<>();
         data.put("billId", bill.getId());
         data.put("requestId", bill.getRequestId());
@@ -253,6 +297,9 @@ public class BillingServiceImpl implements BillingService {
         data.put("serviceFee", bill.getServiceFee());
         data.put("totalFee", bill.getTotalFee());
         data.put("createdAt", bill.getCreatedAt());
+        data.put("generatedTime", bill.getCreatedAt());
+        data.put("startTime", startTime);
+        data.put("endTime", endTime);
         return data;
     }
 

@@ -10,10 +10,14 @@ import com.charging.mapper.ChargingPileMapper;
 import com.charging.mapper.ChargingRequestMapper;
 import com.charging.mapper.PileQueueMapper;
 import com.charging.mapper.UserMapper;
+import com.charging.service.BillingService;
 import com.charging.service.PileService;
+import com.charging.service.ScheduleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -34,8 +38,15 @@ public class PileServiceImpl implements PileService {
     @Autowired
     private UserMapper userMapper;
 
+    @Autowired
+    private BillingService billingService;
+
+    @Autowired
+    private ScheduleService scheduleService;
+
     @Override
     public Result status() {
+        autoCompleteFinishedCharging();
         List<Map<String, Object>> data = new ArrayList<>();
         for (ChargingPile pile : chargingPileMapper.selectList(null)) {
             data.add(buildPileStatus(pile));
@@ -45,6 +56,7 @@ public class PileServiceImpl implements PileService {
 
     @Override
     public Result queue(Long pileId) {
+        autoCompleteFinishedCharging();
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
         wrapper.eq("pile_id", pileId).orderByAsc("position_no");
         List<Map<String, Object>> data = new ArrayList<>();
@@ -102,8 +114,10 @@ public class PileServiceImpl implements PileService {
         data.put("mode", request == null ? null : request.getMode());
         data.put("batteryCapacity", user == null ? null : user.getBatteryCapacity());
         data.put("requestedKwh", request == null ? null : request.getRequestedKwh());
+        data.put("requiredChargeMinutes", estimateFinishMinutes(queue, request));
         data.put("waitingMinutes", 0);
         data.put("estimatedFinishMinutes", estimateFinishMinutes(queue, request));
+        data.putAll(buildChargingProgress(queue, request));
         data.put("status", queue.getStatus());
         return data;
     }
@@ -116,5 +130,45 @@ public class PileServiceImpl implements PileService {
         ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
         return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+    }
+
+    private Map<String, Object> buildChargingProgress(PileQueue queue, ChargingRequest request) {
+        Map<String, Object> data = new HashMap<>();
+        if (request == null || request.getRequestedKwh() == null || !"CHARGING".equalsIgnoreCase(queue.getStatus())) {
+            data.put("chargedKwh", 0);
+            data.put("remainingKwh", request == null ? 0 : request.getRequestedKwh());
+            data.put("remainingMinutes", estimateFinishMinutes(queue, request));
+            return data;
+        }
+
+        ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
+        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
+        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
+        double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
+
+        data.put("chargedKwh", roundOne(chargedKwh));
+        data.put("remainingKwh", roundOne(remainingKwh));
+        data.put("remainingMinutes", (int) Math.ceil(remainingKwh / power * 60));
+        return data;
+    }
+
+    private double roundOne(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private void autoCompleteFinishedCharging() {
+        QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
+        wrapper.eq("status", "CHARGING");
+        boolean completedAny = false;
+        for (PileQueue queue : pileQueueMapper.selectList(wrapper)) {
+            if (billingService.completeIfFullyCharged(queue.getRequestId()) != null) {
+                completedAny = true;
+            }
+        }
+        if (completedAny) {
+            scheduleService.dispatch("BATCH_SHORTEST");
+        }
     }
 }

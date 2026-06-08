@@ -13,6 +13,7 @@ import com.charging.mapper.PileQueueMapper;
 import com.charging.service.BillingService;
 import com.charging.service.FaultService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +50,9 @@ public class FaultServiceImpl implements FaultService {
     @Autowired
     private BillingService billingService;
 
+    @Autowired
+    private SystemConfigService systemConfigService;
+
     @Override
     @Transactional
     public Result simulate(Long pileId, String schedulePolicy, String remark) {
@@ -58,7 +62,6 @@ public class FaultServiceImpl implements FaultService {
         }
 
         String policy = normalizeFaultPolicy(schedulePolicy, POLICY_PRIORITY);
-
         pile.setStatus("FAULT");
         chargingPileMapper.updateById(pile);
 
@@ -68,6 +71,7 @@ public class FaultServiceImpl implements FaultService {
         faultLog.setSchedulePolicy(policy);
         faultLog.setRemark(remark);
         faultLogMapper.insert(faultLog);
+        systemConfigService.setCallingPaused(true);
 
         List<PileQueue> affectedQueues = selectPileQueues(pileId);
         List<Map<String, Object>> affectedVehicles = new ArrayList<>();
@@ -79,8 +83,7 @@ public class FaultServiceImpl implements FaultService {
                 continue;
             }
 
-            Map<String, Object> affectedVehicle = buildVehicleData(request, queue.getStatus(), pileId, null);
-            affectedVehicle.put("status", "FAULT_STOPPED");
+            Map<String, Object> affectedVehicle = buildVehicleData(request, "FAULT_STOPPED", pileId, null);
             affectedVehicles.add(affectedVehicle);
 
             if (isCharging(queue)) {
@@ -88,30 +91,41 @@ public class FaultServiceImpl implements FaultService {
                 if (generatedBillId == null) {
                     generatedBillId = billId;
                 }
-                continue;
+                request = chargingRequestMapper.selectById(queue.getRequestId());
+                if (request == null) {
+                    continue;
+                }
             }
 
             request.setStatus("FAULT_STOPPED");
             chargingRequestMapper.updateById(request);
-
-            queue.setStatus("FAULT_STOPPED");
-            pileQueueMapper.updateById(queue);
+            restoreFaultQueue(queue);
         }
 
         ChargingPile latestPile = chargingPileMapper.selectById(pileId);
+        List<Map<String, Object>> movedVehicles = new ArrayList<>();
         if (latestPile != null) {
             latestPile.setStatus("FAULT");
             chargingPileMapper.updateById(latestPile);
+            movedVehicles = dispatchFaultPileQueue(latestPile, policy);
+        }
+
+        boolean stillPaused = hasRemainingFaultQueue(pileId);
+        systemConfigService.setCallingPaused(stillPaused);
+        if (!stillPaused) {
+            scheduleService.dispatch("BATCH_SHORTEST");
         }
 
         Map<String, Object> data = new HashMap<>();
         data.put("faultPileId", pileId);
         data.put("schedulePolicy", policy);
-        data.put("pausedCalling", true);
+        data.put("pausedCalling", systemConfigService.isCallingPaused());
         data.put("generatedBillId", generatedBillId);
         data.put("affectedVehicles", affectedVehicles);
         data.put("faultLogId", faultLog.getId());
-        data.put("rescheduled", false);
+        data.put("rescheduled", true);
+        data.put("movedVehicles", movedVehicles.size());
+        data.put("assignedVehicles", movedVehicles);
         return Result.success(data);
     }
 
@@ -127,22 +141,19 @@ public class FaultServiceImpl implements FaultService {
         }
 
         String policy = normalizeFaultPolicy(schedulePolicy, POLICY_PRIORITY);
-        List<Map<String, Object>> movedVehicles;
-        if (POLICY_TIME_ORDER.equals(policy)) {
-            movedVehicles = dispatchFaultByTimeOrder(faultPile, false);
-        } else {
-            movedVehicles = dispatchFaultByPriority(faultPile);
-        }
+        List<Map<String, Object>> movedVehicles = dispatchFaultPileQueue(faultPile, policy);
 
         updateLatestFaultPolicy(pileId, policy);
-        if (!hasRemainingFaultQueue(pileId)) {
+        boolean stillPaused = hasRemainingFaultQueue(pileId);
+        systemConfigService.setCallingPaused(stillPaused);
+        if (!stillPaused) {
             scheduleService.dispatch("BATCH_SHORTEST");
         }
 
         Map<String, Object> data = new HashMap<>();
         data.put("faultPileId", pileId);
         data.put("schedulePolicy", policy);
-        data.put("pausedCalling", hasRemainingFaultQueue(pileId));
+        data.put("pausedCalling", systemConfigService.isCallingPaused());
         data.put("rescheduled", true);
         data.put("movedVehicles", movedVehicles.size());
         data.put("assignedVehicles", movedVehicles);
@@ -157,7 +168,7 @@ public class FaultServiceImpl implements FaultService {
             return Result.error("充电桩不存在");
         }
 
-        String policy = normalizeFaultPolicy(schedulePolicy, POLICY_TIME_ORDER);
+        String policy = POLICY_TIME_ORDER;
         pile.setStatus("IDLE");
         chargingPileMapper.updateById(pile);
 
@@ -168,13 +179,13 @@ public class FaultServiceImpl implements FaultService {
             faultLogMapper.updateById(faultLog);
         }
 
-        List<Map<String, Object>> movedVehicles;
-        if (POLICY_PRIORITY.equals(policy)) {
-            movedVehicles = dispatchFaultByPriority(pile);
-        } else {
-            movedVehicles = dispatchFaultByTimeOrder(pile, true);
-        }
+        boolean shouldPauseCalling = hasUnchargedQueueOnOtherSameTypePiles(pile);
+        systemConfigService.setCallingPaused(shouldPauseCalling);
+        List<Map<String, Object>> movedVehicles = shouldPauseCalling
+                ? dispatchRecoveredPileByTimeOrder(pile)
+                : new ArrayList<>();
 
+        systemConfigService.setCallingPaused(false);
         scheduleService.dispatch("BATCH_SHORTEST");
 
         Map<String, Object> data = new HashMap<>();
@@ -187,15 +198,18 @@ public class FaultServiceImpl implements FaultService {
         return Result.success(data);
     }
 
-    private List<Map<String, Object>> dispatchFaultByPriority(ChargingPile faultPile) {
+    private List<Map<String, Object>> dispatchFaultPileQueue(ChargingPile faultPile, String policy) {
         List<PileQueue> faultQueues = selectPileQueues(faultPile.getId());
+        Comparator<PileQueue> comparator = POLICY_TIME_ORDER.equals(policy)
+                ? Comparator.comparing((PileQueue queue) -> queueNumberOrder(queue.getRequestId()))
+                        .thenComparing(PileQueue::getPositionNo, Comparator.nullsLast(Integer::compareTo))
+                : Comparator.comparing(PileQueue::getPositionNo, Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(queue -> queueNumberOrder(queue.getRequestId()));
+        faultQueues.sort(comparator);
+
         List<Map<String, Object>> movedVehicles = new ArrayList<>();
 
         for (PileQueue queue : faultQueues) {
-            if (isCharging(queue)) {
-                continue;
-            }
-
             ChargingRequest request = chargingRequestMapper.selectById(queue.getRequestId());
             if (request == null || isCompleted(request)) {
                 pileQueueMapper.deleteById(queue.getId());
@@ -212,14 +226,14 @@ public class FaultServiceImpl implements FaultService {
             }
 
             pileQueueMapper.deleteById(queue.getId());
-            movedVehicles.add(assignToPile(request, targetPile, "FAULT_QUEUE", queue.getPileId()));
+            movedVehicles.add(assignToPile(request, targetPile, policy, queue.getPileId()));
         }
 
         return movedVehicles;
     }
 
-    private List<Map<String, Object>> dispatchFaultByTimeOrder(ChargingPile basePile, boolean includeBasePile) {
-        List<PileQueue> candidates = collectUnchargedQueuesForTimeOrder(basePile, includeBasePile);
+    private List<Map<String, Object>> dispatchRecoveredPileByTimeOrder(ChargingPile recoveredPile) {
+        List<PileQueue> candidates = collectUnchargedQueuesForRecovery(recoveredPile);
         candidates.sort(Comparator
                 .comparing((PileQueue queue) -> queueNumberOrder(queue.getRequestId()))
                 .thenComparing(PileQueue::getPositionNo, Comparator.nullsLast(Integer::compareTo)));
@@ -238,7 +252,7 @@ public class FaultServiceImpl implements FaultService {
 
         List<Map<String, Object>> movedVehicles = new ArrayList<>();
         for (RequeueCandidate candidate : requeueCandidates) {
-            ChargingPile targetPile = findBestPile(basePile.getType(), null);
+            ChargingPile targetPile = findBestPile(recoveredPile.getType(), null);
             if (targetPile == null) {
                 candidate.request.setStatus("FAULT_STOPPED");
                 chargingRequestMapper.updateById(candidate.request);
@@ -251,20 +265,12 @@ public class FaultServiceImpl implements FaultService {
         return movedVehicles;
     }
 
-    private List<PileQueue> collectUnchargedQueuesForTimeOrder(ChargingPile basePile, boolean includeBasePile) {
-        List<ChargingPile> sameTypePiles = selectSameTypeAvailablePiles(basePile.getType(), includeBasePile ? null : basePile.getId());
+    private List<PileQueue> collectUnchargedQueuesForRecovery(ChargingPile recoveredPile) {
+        List<ChargingPile> sameTypePiles = selectSameTypeAvailablePiles(recoveredPile.getType(), null);
         List<PileQueue> candidates = new ArrayList<>();
 
         for (ChargingPile pile : sameTypePiles) {
             for (PileQueue queue : selectPileQueues(pile.getId())) {
-                if (!isCharging(queue)) {
-                    candidates.add(queue);
-                }
-            }
-        }
-
-        if (!includeBasePile) {
-            for (PileQueue queue : selectPileQueues(basePile.getId())) {
                 if (!isCharging(queue)) {
                     candidates.add(queue);
                 }
@@ -327,6 +333,39 @@ public class FaultServiceImpl implements FaultService {
             wrapper.ne("id", excludedPileId);
         }
         return chargingPileMapper.selectList(wrapper);
+    }
+
+    private void restoreFaultQueue(PileQueue sourceQueue) {
+        QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
+        wrapper.eq("request_id", sourceQueue.getRequestId()).last("limit 1");
+        PileQueue existingQueue = pileQueueMapper.selectOne(wrapper);
+
+        if (existingQueue == null) {
+            existingQueue = new PileQueue();
+            existingQueue.setPileId(sourceQueue.getPileId());
+            existingQueue.setRequestId(sourceQueue.getRequestId());
+            existingQueue.setPositionNo(sourceQueue.getPositionNo());
+            existingQueue.setStatus("FAULT_STOPPED");
+            pileQueueMapper.insert(existingQueue);
+            return;
+        }
+
+        existingQueue.setPileId(sourceQueue.getPileId());
+        existingQueue.setPositionNo(sourceQueue.getPositionNo());
+        existingQueue.setStatus("FAULT_STOPPED");
+        pileQueueMapper.updateById(existingQueue);
+    }
+
+    private boolean hasUnchargedQueueOnOtherSameTypePiles(ChargingPile recoveredPile) {
+        List<ChargingPile> sameTypePiles = selectSameTypeAvailablePiles(recoveredPile.getType(), recoveredPile.getId());
+        for (ChargingPile pile : sameTypePiles) {
+            for (PileQueue queue : selectPileQueues(pile.getId())) {
+                if (!isCharging(queue)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private List<PileQueue> selectPileQueues(Long pileId) {

@@ -12,13 +12,16 @@ import com.charging.mapper.ChargingRequestMapper;
 import com.charging.mapper.PileQueueMapper;
 import com.charging.mapper.UserMapper;
 import com.charging.mapper.WaitingQueueMapper;
+import com.charging.service.BillingService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,10 +47,19 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Autowired
     private UserMapper userMapper;
 
+    @Autowired
+    private SystemConfigService systemConfigService;
+
+    @Autowired
+    private BillingService billingService;
+
     @Override
     @Transactional
     public Result dispatch(String policy) {
         String normalizedPolicy = normalizePolicy(policy, "BATCH_SHORTEST");
+        if ("PRIORITY".equalsIgnoreCase(normalizedPolicy) || "TIME_ORDER".equalsIgnoreCase(normalizedPolicy)) {
+            normalizedPolicy = "BATCH_SHORTEST";
+        }
         List<Map<String, Object>> assignedVehicles = dispatchInternal(normalizedPolicy);
         return Result.success(assignedVehicles.size());
     }
@@ -75,12 +87,14 @@ public class ScheduleServiceImpl implements ScheduleService {
     }
 
     @Override
+    @Transactional
     public Result snapshot() {
+        autoCompleteFinishedCharging();
         Map<String, Object> snapshot = new HashMap<>();
         snapshot.put("waitingArea", buildWaitingArea());
         snapshot.put("piles", buildPiles());
         snapshot.put("pileQueues", buildPileQueues());
-        snapshot.put("pausedCalling", false);
+        snapshot.put("pausedCalling", systemConfigService.isCallingPaused());
 
         Map<String, Object> data = new HashMap<>();
         data.put("snapshot", snapshot);
@@ -101,11 +115,6 @@ public class ScheduleServiceImpl implements ScheduleService {
         QueryWrapper<WaitingQueue> wrapper = new QueryWrapper<>();
         wrapper.orderByAsc("position_no");
         List<WaitingQueue> waitingQueues = waitingQueueMapper.selectList(wrapper);
-
-        if ("PRIORITY".equalsIgnoreCase(policy)) {
-            waitingQueues.sort(Comparator.comparing((WaitingQueue item) -> !"FAST".equalsIgnoreCase(item.getMode()))
-                    .thenComparing(WaitingQueue::getPositionNo, Comparator.nullsLast(Integer::compareTo)));
-        }
 
         int dispatchLimit = "SINGLE_SHORTEST".equalsIgnoreCase(policy) ? 1 : waitingQueues.size();
         int dispatchedCount = 0;
@@ -175,6 +184,7 @@ public class ScheduleServiceImpl implements ScheduleService {
             item.put("mode", waitingQueue.getMode());
             item.put("batteryCapacity", user == null ? null : user.getBatteryCapacity());
             item.put("requestedKwh", request == null ? null : request.getRequestedKwh());
+            item.put("requiredChargeMinutes", request == null ? 0 : estimateFullMinutes(waitingQueue.getMode(), request));
             item.put("waitingMinutes", 0);
             data.add(item);
         }
@@ -211,7 +221,9 @@ public class ScheduleServiceImpl implements ScheduleService {
             item.put("mode", request == null ? null : request.getMode());
             item.put("requestedKwh", request == null ? null : request.getRequestedKwh());
             item.put("status", queue.getStatus());
+            item.put("requiredChargeMinutes", pile == null || request == null ? 0 : estimateFinishMinutes(pile, request));
             item.put("estimatedFinishMinutes", pile == null || request == null ? 0 : estimateFinishMinutes(pile, request));
+            item.putAll(buildChargingProgress(queue, pile, request));
 
             data.computeIfAbsent(String.valueOf(queue.getPileId()), key -> new ArrayList<>()).add(item);
         }
@@ -281,6 +293,53 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
         double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
         return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+    }
+
+    private int estimateFullMinutes(String mode, ChargingRequest request) {
+        if (request == null || request.getRequestedKwh() == null) {
+            return 0;
+        }
+        double power = "SLOW".equalsIgnoreCase(mode) ? 10.0 : 30.0;
+        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+    }
+
+    private Map<String, Object> buildChargingProgress(PileQueue queue, ChargingPile pile, ChargingRequest request) {
+        Map<String, Object> data = new HashMap<>();
+        if (request == null || request.getRequestedKwh() == null || pile == null || !"CHARGING".equalsIgnoreCase(queue.getStatus())) {
+            data.put("chargedKwh", 0);
+            data.put("remainingKwh", request == null ? 0 : request.getRequestedKwh());
+            data.put("remainingMinutes", pile == null || request == null ? 0 : estimateFinishMinutes(pile, request));
+            return data;
+        }
+
+        double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
+        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
+        double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
+
+        data.put("chargedKwh", roundOne(chargedKwh));
+        data.put("remainingKwh", roundOne(remainingKwh));
+        data.put("remainingMinutes", (int) Math.ceil(remainingKwh / power * 60));
+        return data;
+    }
+
+    private double roundOne(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private void autoCompleteFinishedCharging() {
+        QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
+        wrapper.eq("status", "CHARGING");
+        boolean completedAny = false;
+        for (PileQueue queue : pileQueueMapper.selectList(wrapper)) {
+            if (billingService.completeIfFullyCharged(queue.getRequestId()) != null) {
+                completedAny = true;
+            }
+        }
+        if (completedAny) {
+            dispatchInternal("BATCH_SHORTEST");
+        }
     }
 
     private String normalizePolicy(String policy, String defaultPolicy) {

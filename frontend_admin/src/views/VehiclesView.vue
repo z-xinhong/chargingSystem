@@ -122,7 +122,11 @@ async function handleSave() {
   }
 
   try {
-    await saveVehicle(form);
+    await saveVehicle({
+      ...form,
+      id: form.userId,
+      role: 'USER'
+    });
     message.value = '车辆信息已保存';
     await loadVehicles();
   } catch (error) {

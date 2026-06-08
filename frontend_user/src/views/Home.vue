@@ -1,17 +1,35 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
 
 const username = computed(() => sessionStorage.getItem('username') || '未登录用户');
 const userId = computed(() => sessionStorage.getItem('userId') || '-');
-const currentRequestId = computed(() => sessionStorage.getItem('currentRequestId'));
+const currentRequestId = ref('');
 const hasCurrentRequest = computed(() => Boolean(currentRequestId.value));
+let removeRouteHook = null;
+
+function refreshCurrentRequest() {
+  currentRequestId.value = sessionStorage.getItem('currentRequestId') || '';
+}
 
 function goTo(path) {
   router.push(path);
 }
+
+onMounted(() => {
+  refreshCurrentRequest();
+  window.addEventListener('focus', refreshCurrentRequest);
+  removeRouteHook = router.afterEach(refreshCurrentRequest);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshCurrentRequest);
+  if (removeRouteHook) {
+    removeRouteHook();
+  }
+});
 </script>
 
 <template>
@@ -41,17 +59,17 @@ function goTo(path) {
         <el-card class="status-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>当前请求状态</span>
+              <span>未结束请求状态</span>
             </div>
           </template>
 
           <div v-if="hasCurrentRequest" class="status-box success-box">
-            <p class="status-title">当前存在充电请求</p>
-            <p class="status-desc">请求编号：{{ currentRequestId }}</p>
+            <p class="status-title">当前存在未结束充电请求</p>
+            <p class="status-desc">最近请求编号：{{ currentRequestId }}，可进入排队状态查看全部请求</p>
           </div>
 
           <div v-else class="status-box empty-box">
-            <p class="status-title">当前没有充电请求，请先提交充电请求</p>
+            <p class="status-title">当前没有未结束充电请求，请先提交充电请求</p>
           </div>
         </el-card>
       </el-col>

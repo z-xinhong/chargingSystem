@@ -35,3 +35,10 @@ export function getRequestStatus(requestId) {
     }
   });
 }
+
+export function getRequestList() {
+  return request({
+    url: '/request/list',
+    method: 'get'
+  });
+}

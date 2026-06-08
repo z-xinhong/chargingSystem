@@ -27,13 +27,13 @@ public class UserServiceImpl implements UserService {
             return Result.error("参数错误");
         }
         if (dto.getUsername().length() < 3 || dto.getUsername().length() > 20) {
-            return Result.error("用户名长度需为3-20位");
+            return Result.error("用户名长度需要为 3-20 位");
         }
         if (dto.getPassword().length() < 6 || dto.getPassword().length() > 20) {
-            return Result.error("密码长度需为6-20位");
+            return Result.error("密码长度需要为 6-20 位");
         }
         if (dto.getBatteryCapacity() <= 0) {
-            return Result.error("电池容量必须大于0");
+            return Result.error("电池容量必须大于 0");
         }
 
         QueryWrapper<User> wrapper = new QueryWrapper<>();

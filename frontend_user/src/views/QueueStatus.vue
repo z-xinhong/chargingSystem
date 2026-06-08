@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { endCharging } from '../api/charging';
-import { getRequestStatus } from '../api/chargingRequest';
+import { getRequestList } from '../api/chargingRequest';
 import {
   formatMode,
   formatMoney,
@@ -15,31 +15,19 @@ import {
 
 const router = useRouter();
 const loading = ref(false);
-const endLoading = ref(false);
-const statusData = ref(null);
+const endLoadingId = ref(null);
+const requests = ref([]);
 const endResult = ref(null);
-const currentRequestId = ref(sessionStorage.getItem('currentRequestId') || '');
 
-const hasRequestId = computed(() => Boolean(currentRequestId.value));
-const isFinished = computed(() => {
-  const status = statusData.value?.status;
-  return status === 'COMPLETED' || status === 'CANCELLED';
-});
+const hasRequests = computed(() => requests.value.length > 0);
 
-async function fetchStatus() {
-  if (!currentRequestId.value) {
-    return;
-  }
-
+async function fetchRequests() {
   loading.value = true;
 
   try {
-    const res = await getRequestStatus(currentRequestId.value);
-    statusData.value = res.data || null;
-
-    if (isFinished.value) {
-      ElMessage.info('当前请求已结束');
-    }
+    const res = await getRequestList();
+    requests.value = Array.isArray(res.data) ? res.data : [];
+    syncCurrentRequestId();
   } catch (error) {
     ElMessage.error(error?.message || error?.data?.message || '获取排队状态失败');
   } finally {
@@ -47,30 +35,38 @@ async function fetchStatus() {
   }
 }
 
-async function handleEndCharging() {
-  if (!currentRequestId.value) {
-    ElMessage.warning('当前没有充电请求，请先提交充电请求');
-    return;
+function syncCurrentRequestId() {
+  if (requests.value.length > 0) {
+    sessionStorage.setItem('currentRequestId', String(requests.value[0].requestId));
+  } else {
+    sessionStorage.removeItem('currentRequestId');
   }
+}
 
+function isFinished(request) {
+  return request.status === 'COMPLETED' || request.status === 'CANCELLED';
+}
+
+function canEndCharging(request) {
+  return request.status === 'CHARGING' && !isFinished(request);
+}
+
+async function handleEndCharging(request) {
   try {
-    await ElMessageBox.confirm('确定要结束当前充电吗？', '结束充电', {
+    await ElMessageBox.confirm(`确定要结束请求 ${request.requestId} 的充电吗？`, '结束充电', {
       type: 'warning',
       confirmButtonText: '确定',
       cancelButtonText: '取消'
     });
 
-    endLoading.value = true;
-
+    endLoadingId.value = request.requestId;
     const res = await endCharging({
-      requestId: Number(currentRequestId.value)
+      requestId: Number(request.requestId)
     });
 
     endResult.value = res.data || null;
-    sessionStorage.removeItem('currentRequestId');
-    currentRequestId.value = '';
-    statusData.value = null;
     ElMessage.success('结束充电成功');
+    await fetchRequests();
   } catch (error) {
     if (error === 'cancel' || error === 'close') {
       return;
@@ -78,7 +74,7 @@ async function handleEndCharging() {
 
     ElMessage.error(error?.message || error?.data?.message || '结束充电失败');
   } finally {
-    endLoading.value = false;
+    endLoadingId.value = null;
   }
 }
 
@@ -86,11 +82,7 @@ function goToBills() {
   router.push('/bills');
 }
 
-onMounted(() => {
-  if (currentRequestId.value) {
-    fetchStatus();
-  }
-});
+onMounted(fetchRequests);
 </script>
 
 <template>
@@ -98,67 +90,69 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">当前排队状态</h2>
-        <p class="page-desc">查看当前充电请求的排队进度、状态与预计等待时间。</p>
+        <p class="page-desc">查看当前账号下所有未结束充电请求的排队进度、状态与预计等待时间。</p>
       </div>
+      <el-button type="primary" :loading="loading" @click="fetchRequests">
+        刷新状态
+      </el-button>
     </div>
 
-    <el-card v-if="!hasRequestId && !endResult" class="queue-card" shadow="hover">
-      <el-empty description="当前没有充电请求，请先提交充电请求" />
+    <el-card v-if="!hasRequests && !endResult" class="queue-card" shadow="hover">
+      <el-empty description="当前没有未结束的充电请求，请先提交充电请求" />
     </el-card>
 
-    <template v-if="hasRequestId">
-      <el-card class="queue-card" shadow="hover">
+    <div v-if="hasRequests" class="request-list">
+      <el-card
+        v-for="request in requests"
+        :key="request.requestId"
+        class="queue-card"
+        shadow="hover"
+      >
         <div class="toolbar">
           <div class="request-info">
-            当前请求 ID：<strong>{{ currentRequestId }}</strong>
+            请求 ID：<strong>{{ request.requestId }}</strong>
+            <span class="queue-number">排队号：{{ request.queueNumber }}</span>
           </div>
-          <div class="toolbar-actions">
-            <el-button type="primary" :loading="loading" @click="fetchStatus">
-              刷新状态
-            </el-button>
-            <el-button type="danger" :loading="endLoading" @click="handleEndCharging">
-              结束充电
-            </el-button>
-          </div>
+          <el-button
+            v-if="canEndCharging(request)"
+            type="danger"
+            :loading="endLoadingId === request.requestId"
+            @click="handleEndCharging(request)"
+          >
+            结束充电
+          </el-button>
         </div>
 
-        <el-descriptions v-if="statusData" :column="2" border>
-          <el-descriptions-item label="请求 ID">
-            {{ statusData.requestId }}
-          </el-descriptions-item>
-          <el-descriptions-item label="排队号">
-            {{ statusData.queueNumber }}
-          </el-descriptions-item>
+        <el-descriptions :column="2" border>
           <el-descriptions-item label="充电模式">
-            {{ formatMode(statusData.queueType) }}
+            {{ formatMode(request.queueType) }}
           </el-descriptions-item>
           <el-descriptions-item label="当前状态">
-            <el-tag :type="getStatusTagType(statusData.status)">
-              {{ formatStatus(statusData.status) }}
+            <el-tag :type="getStatusTagType(request.status)">
+              {{ formatStatus(request.status) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="请求电量">
+            {{ request.requestedKwh ?? '-' }} 度
+          </el-descriptions-item>
           <el-descriptions-item label="前车等待数量">
-            {{ statusData.waitingCount }}
+            {{ request.waitingCount }}
           </el-descriptions-item>
           <el-descriptions-item label="预计等待时间">
-            {{ formatTime(statusData.estimatedWaitMinutes ? `${statusData.estimatedWaitMinutes} 分钟` : '') }}
+            {{ formatTime(request.estimatedWaitMinutes ? `${request.estimatedWaitMinutes} 分钟` : '') }}
+          </el-descriptions-item>
+          <el-descriptions-item label="已充电量">
+            {{ request.chargedKwh ?? 0 }} 度
+          </el-descriptions-item>
+          <el-descriptions-item label="剩余电量">
+            {{ request.remainingKwh ?? request.requestedKwh ?? '-' }} 度
+          </el-descriptions-item>
+          <el-descriptions-item label="剩余充电时间">
+            {{ request.remainingMinutes ?? '-' }} 分钟
           </el-descriptions-item>
         </el-descriptions>
-
-        <el-empty
-          v-else
-          description="点击“刷新状态”获取当前排队信息"
-        />
       </el-card>
-
-      <el-alert
-        v-if="isFinished"
-        title="当前请求已结束"
-        type="info"
-        show-icon
-        :closable="false"
-      />
-    </template>
+    </div>
 
     <el-card v-if="endResult" class="result-card" shadow="hover">
       <template #header>
@@ -196,7 +190,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.queue-page {
+.queue-page,
+.request-list {
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -215,14 +210,16 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
-.toolbar-actions {
-  display: flex;
-  gap: 12px;
-}
-
 .request-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   font-size: 15px;
   color: #475569;
+}
+
+.queue-number {
+  color: #64748b;
 }
 
 .result-header {
@@ -242,20 +239,13 @@ onMounted(() => {
     align-items: flex-start;
   }
 
-  .toolbar-actions {
+  .toolbar .el-button,
+  .result-actions .el-button {
     width: 100%;
-  }
-
-  .toolbar-actions .el-button {
-    flex: 1;
   }
 
   .result-actions {
     justify-content: stretch;
-  }
-
-  .result-actions .el-button {
-    width: 100%;
   }
 }
 </style>

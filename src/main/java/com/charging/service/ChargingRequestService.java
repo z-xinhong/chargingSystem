@@ -12,4 +12,6 @@ public interface ChargingRequestService {
     Result cancel(Long userId, Long requestId);
 
     Result status(Long userId, Long requestId);
+
+    Result listActive(Long userId);
 }

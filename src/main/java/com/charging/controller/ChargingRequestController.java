@@ -51,6 +51,12 @@ public class ChargingRequestController {
         return service.status(userId, requestId);
     }
 
+    @GetMapping("/list")
+    public Result list(@RequestHeader("Authorization") String token) {
+        Long userId = getUserIdFromToken(token);
+        return service.listActive(userId);
+    }
+
     private Long getUserIdFromToken(String token) {
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);

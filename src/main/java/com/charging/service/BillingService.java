@@ -11,4 +11,6 @@ public interface BillingService {
     Result detail(Long billId, Long userId);
 
     Long generateFaultBill(Long requestId);
+
+    Long completeIfFullyCharged(Long requestId);
 }

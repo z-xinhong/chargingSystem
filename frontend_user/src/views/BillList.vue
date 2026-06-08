@@ -27,7 +27,7 @@ function pickValue(row, keys, fallback = '-') {
 function formatBillRow(row) {
   return {
     billId: pickValue(row, ['billId', 'id']),
-    generatedTime: pickValue(row, ['generatedTime', 'createTime', 'createdTime', 'billTime']),
+    generatedTime: pickValue(row, ['generatedTime', 'createdAt', 'createTime', 'createdTime', 'billTime']),
     pileId: pickValue(row, ['pileId', 'chargingPileId', 'pileNo']),
     chargedKwh: pickValue(row, ['actualKwh', 'chargedAmount', 'chargedKwh']),
     durationHours: pickValue(row, ['durationHours', 'chargingDuration']),
@@ -35,8 +35,7 @@ function formatBillRow(row) {
     endTime: pickValue(row, ['endTime', 'chargingEndTime']),
     electricityFee: pickValue(row, ['electricityFee', 'chargingFee']),
     serviceFee: pickValue(row, ['serviceFee']),
-    totalFee: pickValue(row, ['totalFee']),
-    paymentStatus: pickValue(row, ['paymentStatus', 'status'])
+    totalFee: pickValue(row, ['totalFee'])
   };
 }
 
@@ -138,7 +137,6 @@ onMounted(() => {
             {{ formatMoney(row.totalFee) }}
           </template>
         </el-table-column>
-        <el-table-column prop="paymentStatus" label="支付状态" min-width="120" />
       </el-table>
 
       <div class="pagination-wrap">

@@ -3,8 +3,8 @@
     <div class="grid four">
       <StatCard label="快充桩" value="3 个" hint="30 度/小时" />
       <StatCard label="慢充桩" value="2 个" hint="10 度/小时" />
-      <StatCard label="等候区容量" value="10 位" hint="WaitingAreaSize" />
-      <StatCard label="队列长度" value="5 位" hint="ChargingQueueLen" />
+      <StatCard label="等待区容量" value="10 位" hint="WaitingAreaSize" />
+      <StatCard label="桩队列长度" value="5 位" hint="ChargingQueueLen" />
     </div>
 
     <section class="content-block">
@@ -55,6 +55,10 @@
             <th>模式</th>
             <th>电池容量</th>
             <th>请求电量</th>
+            <th>所需时间</th>
+            <th>已充电量</th>
+            <th>剩余电量</th>
+            <th>剩余时间</th>
             <th>排队时长</th>
             <th>预计完成</th>
             <th>状态</th>
@@ -65,14 +69,18 @@
             <td>{{ car.queueNumber || '-' }}</td>
             <td>{{ car.userId }}</td>
             <td>{{ formatMode(car.mode || car.queueType) }}</td>
-            <td>{{ car.batteryCapacity }} 度</td>
-            <td>{{ car.requestedKwh }} 度</td>
+            <td>{{ car.batteryCapacity ?? '-' }} 度</td>
+            <td>{{ car.requestedKwh ?? '-' }} 度</td>
+            <td>{{ car.requiredChargeMinutes ?? '-' }} 分钟</td>
+            <td>{{ car.chargedKwh ?? '-' }} 度</td>
+            <td>{{ car.remainingKwh ?? '-' }} 度</td>
+            <td>{{ car.remainingMinutes ?? '-' }} 分钟</td>
             <td>{{ car.waitingMinutes ?? car.waitingTime ?? '-' }} 分钟</td>
             <td>{{ car.estimatedFinishMinutes ?? '-' }} 分钟</td>
             <td>{{ formatStatus(car.status) }}</td>
           </tr>
           <tr v-if="!queue.length">
-            <td colspan="8">请选择充电桩查看队列</td>
+            <td colspan="12">请选择充电桩查看队列</td>
           </tr>
         </tbody>
       </table>
@@ -85,10 +93,10 @@ import { onMounted, ref } from 'vue';
 import AppShell from '../components/AppShell.vue';
 import StatCard from '../components/StatCard.vue';
 import { getPileQueue, getPileStatus, simulateFault, startPile, stopPile } from '../services/api';
-import { mockPileQueues, mockPiles } from '../services/mockData';
 
 const piles = ref([]);
 const queue = ref([]);
+const pileQueues = ref({});
 const selectedPile = ref(null);
 const message = ref('');
 const schedulePolicy = ref('PRIORITY');
@@ -98,10 +106,26 @@ async function loadPiles() {
   try {
     const data = await getPileStatus();
     piles.value = normalizeList(data);
+    await loadAllQueues();
   } catch (error) {
-    piles.value = mockPiles;
-    message.value = '后端暂未连接，当前展示演示数据';
+    piles.value = [];
+    pileQueues.value = {};
+    message.value = `后端接口未连接或请求失败：${error.message}`;
   }
+}
+
+async function loadAllQueues() {
+  const entries = await Promise.all(
+    piles.value.map(async (pile) => {
+      try {
+        const data = await getPileQueue(pile.pileId);
+        return [pile.pileId, normalizeList(data)];
+      } catch (error) {
+        return [pile.pileId, []];
+      }
+    })
+  );
+  pileQueues.value = Object.fromEntries(entries);
 }
 
 async function loadQueue(pileId) {
@@ -109,9 +133,14 @@ async function loadQueue(pileId) {
   try {
     const data = await getPileQueue(pileId);
     queue.value = normalizeList(data);
+    pileQueues.value = {
+      ...pileQueues.value,
+      [pileId]: queue.value
+    };
+    message.value = '';
   } catch (error) {
-    queue.value = mockPileQueues[pileId] || [];
-    message.value = '队列接口暂未连接，当前展示演示数据';
+    queue.value = [];
+    message.value = `队列接口请求失败：${error.message}`;
   }
 }
 
@@ -120,7 +149,7 @@ async function handleStart(pileId) {
     await startPile(pileId);
     await loadPiles();
   } catch (error) {
-    message.value = `启动接口暂不可用：${error.message}`;
+    message.value = `启动接口请求失败：${error.message}`;
   }
 }
 
@@ -129,7 +158,7 @@ async function handleStop(pileId) {
     await stopPile(pileId);
     await loadPiles();
   } catch (error) {
-    message.value = `关闭接口暂不可用：${error.message}`;
+    message.value = `关闭接口请求失败：${error.message}`;
   }
 }
 
@@ -138,20 +167,22 @@ async function handleFault(pileId) {
     await simulateFault(pileId, schedulePolicy.value);
     await loadPiles();
   } catch (error) {
-    message.value = `故障调度接口暂不可用：${error.message}`;
+    message.value = `故障接口请求失败：${error.message}`;
   }
 }
 
 function normalizeList(data) {
-  return Array.isArray(data) ? data : data.records || data.list || data.items || [];
+  if (Array.isArray(data)) return data;
+  return data?.records || data?.list || data?.items || [];
 }
 
 function queueCount(pileId) {
-  return (mockPileQueues[pileId] || []).length;
+  return (pileQueues.value[pileId] || []).length;
 }
 
 function currentCar(pileId) {
-  const car = (mockPileQueues[pileId] || [])[0];
+  const cars = pileQueues.value[pileId] || [];
+  const car = cars.find((item) => item.status === 'CHARGING') || cars[0];
   return car ? car.queueNumber : '无';
 }
 
