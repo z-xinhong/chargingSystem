@@ -122,14 +122,14 @@ public class PileServiceImpl implements PileService {
         return data;
     }
 
-    private int estimateFinishMinutes(PileQueue queue, ChargingRequest request) {
+    private double estimateFinishMinutes(PileQueue queue, ChargingRequest request) {
         if (request == null || request.getRequestedKwh() == null) {
             return 0;
         }
 
         ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
-        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+        return roundTwo(request.getRequestedKwh() / power * 60);
     }
 
     private Map<String, Object> buildChargingProgress(PileQueue queue, ChargingRequest request) {
@@ -144,18 +144,22 @@ public class PileServiceImpl implements PileService {
         ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
         LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
         double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
 
         data.put("chargedKwh", roundOne(chargedKwh));
         data.put("remainingKwh", roundOne(remainingKwh));
-        data.put("remainingMinutes", (int) Math.ceil(remainingKwh / power * 60));
+        data.put("remainingMinutes", roundTwo(remainingKwh / power * 60));
         return data;
     }
 
     private double roundOne(double value) {
         return Math.round(value * 10.0) / 10.0;
+    }
+
+    private double roundTwo(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 
     private void autoCompleteFinishedCharging() {

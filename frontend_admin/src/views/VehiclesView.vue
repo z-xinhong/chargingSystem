@@ -43,22 +43,22 @@
       <p class="feedback" v-if="message">{{ message }}</p>
     </section>
 
-    <section class="content-block">
+    <section class="content-block" v-if="form.userId">
       <div class="section-heading">
-        <h3>{{ form.userId ? '编辑车辆' : '新增车辆' }}</h3>
+        <h3>编辑车辆</h3>
         <div class="button-row">
           <button type="button" @click="handleSave">保存</button>
-          <button class="ghost-light-button" type="button" @click="resetForm">清空</button>
+          <button class="ghost-light-button" type="button" @click="clearSelection">取消编辑</button>
         </div>
       </div>
       <div class="form-grid">
         <label>
           用户 ID
-          <input v-model.number="form.userId" min="1" type="number" />
+          <input v-model.number="form.userId" min="1" type="number" disabled />
         </label>
         <label>
           用户名
-          <input v-model.trim="form.username" />
+          <input v-model.trim="form.username" disabled />
         </label>
         <label>
           手机号
@@ -74,12 +74,7 @@
         </label>
         <label>
           状态
-          <select v-model="form.status">
-            <option value="WAITING">等待中</option>
-            <option value="CHARGING">充电中</option>
-            <option value="COMPLETED">已完成</option>
-            <option value="CANCELLED">已取消</option>
-          </select>
+          <input :value="formatStatus(form.status)" disabled />
         </label>
       </div>
     </section>
@@ -116,8 +111,8 @@ function editVehicle(vehicle) {
 }
 
 async function handleSave() {
-  if (!form.userId || !form.username || !form.batteryCapacity) {
-    message.value = '请填写用户 ID、用户名和电池容量';
+  if (!form.userId || !form.batteryCapacity) {
+    message.value = '请先选择要编辑的车辆，并填写电池容量';
     return;
   }
 
@@ -131,13 +126,14 @@ async function handleSave() {
     await loadVehicles();
   } catch (error) {
     const index = vehicles.value.findIndex((item) => item.userId === form.userId);
-    if (index >= 0) vehicles.value[index] = { ...form };
-    else vehicles.value.push({ ...form });
+    if (index >= 0) {
+      vehicles.value[index] = { ...form };
+    }
     message.value = '后端暂未连接，已在页面内更新演示数据';
   }
 }
 
-function resetForm() {
+function clearSelection() {
   Object.assign(form, emptyVehicle());
 }
 

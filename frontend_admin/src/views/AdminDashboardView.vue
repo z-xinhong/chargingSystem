@@ -3,8 +3,8 @@
     <div class="grid four">
       <StatCard label="快充桩" value="3 个" hint="30 度/小时" />
       <StatCard label="慢充桩" value="2 个" hint="10 度/小时" />
-      <StatCard label="等待区容量" value="10 位" hint="WaitingAreaSize" />
-      <StatCard label="桩队列长度" value="5 位" hint="ChargingQueueLen" />
+      <StatCard label="等待区容量" value="5 位" hint="WaitingAreaSize" />
+      <StatCard label="桩队列长度" value="3 位" hint="ChargingQueueLen" />
     </div>
 
     <section class="content-block">
@@ -23,9 +23,9 @@
           <dl>
             <div><dt>是否正常</dt><dd>{{ pile.isWorking === false || pile.status === 'FAULT' ? '否' : '是' }}</dd></div>
             <div><dt>累计次数</dt><dd>{{ pile.totalCount || 0 }}</dd></div>
-            <div><dt>总时长</dt><dd>{{ pile.totalDuration || 0 }} 小时</dd></div>
-            <div><dt>总电量</dt><dd>{{ pile.totalKwh || 0 }} 度</dd></div>
-            <div><dt>队列长度</dt><dd>{{ queueCount(pile.pileId) }}/5</dd></div>
+            <div><dt>总时长</dt><dd>{{ formatHours(pile.totalDuration) }} 小时</dd></div>
+            <div><dt>总电量</dt><dd>{{ formatKwh(pile.totalKwh) }} 度</dd></div>
+            <div><dt>队列长度</dt><dd>{{ queueCount(pile.pileId) }}/3</dd></div>
             <div><dt>当前任务</dt><dd>{{ currentCar(pile.pileId) }}</dd></div>
           </dl>
           <div class="button-row">
@@ -69,14 +69,14 @@
             <td>{{ car.queueNumber || '-' }}</td>
             <td>{{ car.userId }}</td>
             <td>{{ formatMode(car.mode || car.queueType) }}</td>
-            <td>{{ car.batteryCapacity ?? '-' }} 度</td>
-            <td>{{ car.requestedKwh ?? '-' }} 度</td>
-            <td>{{ car.requiredChargeMinutes ?? '-' }} 分钟</td>
-            <td>{{ car.chargedKwh ?? '-' }} 度</td>
-            <td>{{ car.remainingKwh ?? '-' }} 度</td>
-            <td>{{ car.remainingMinutes ?? '-' }} 分钟</td>
-            <td>{{ car.waitingMinutes ?? car.waitingTime ?? '-' }} 分钟</td>
-            <td>{{ car.estimatedFinishMinutes ?? '-' }} 分钟</td>
+            <td>{{ formatKwh(car.batteryCapacity) }} 度</td>
+            <td>{{ formatKwh(car.requestedKwh) }} 度</td>
+            <td>{{ formatMinutes(car.requiredChargeMinutes) }} 分钟</td>
+            <td>{{ formatKwh(car.chargedKwh) }} 度</td>
+            <td>{{ formatKwh(car.remainingKwh) }} 度</td>
+            <td>{{ formatMinutes(car.remainingMinutes) }} 分钟</td>
+            <td>{{ formatMinutes(car.waitingMinutes ?? car.waitingTime) }} 分钟</td>
+            <td>{{ formatMinutes(car.estimatedFinishMinutes) }} 分钟</td>
             <td>{{ formatStatus(car.status) }}</td>
           </tr>
           <tr v-if="!queue.length">
@@ -107,6 +107,9 @@ async function loadPiles() {
     const data = await getPileStatus();
     piles.value = normalizeList(data);
     await loadAllQueues();
+    if (selectedPile.value) {
+      queue.value = pileQueues.value[selectedPile.value] || [];
+    }
   } catch (error) {
     piles.value = [];
     pileQueues.value = {};
@@ -206,6 +209,26 @@ function formatStatus(status) {
     FAULT_STOPPED: '故障停止'
   };
   return map[status] || status || '-';
+}
+
+function formatNumber(value, digits) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(digits) : value;
+}
+
+function formatMinutes(value) {
+  return formatNumber(value, 2);
+}
+
+function formatHours(value) {
+  return formatNumber(value || 0, 2);
+}
+
+function formatKwh(value) {
+  return formatNumber(value, 2);
 }
 
 function statusClass(status) {

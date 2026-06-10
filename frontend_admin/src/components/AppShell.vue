@@ -44,14 +44,12 @@ const auth = useAuthStore();
 const router = useRouter();
 
 const roleLabel = computed(() => (auth.role === 'ADMIN' ? '管理员端' : '用户端'));
-const navItems = computed(() =>
-  [
-    { label: '工作台', to: '/admin' },
-    { label: '调度中心', to: '/admin/scheduling' },
-    { label: '车辆维护', to: '/admin/vehicles' },
-    { label: '运营报表', to: '/admin/reports' }
-  ]
-);
+const navItems = computed(() => [
+  { label: '工作台', to: '/admin' },
+  { label: '调度中心', to: '/admin/scheduling' },
+  { label: '车辆维护', to: '/admin/vehicles' },
+  { label: '运营报表', to: '/admin/reports' }
+]);
 
 function handleLogout() {
   auth.logout();

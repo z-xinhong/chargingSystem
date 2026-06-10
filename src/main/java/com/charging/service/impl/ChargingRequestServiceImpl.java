@@ -33,6 +33,8 @@ import java.util.Map;
 @Service
 public class ChargingRequestServiceImpl implements ChargingRequestService {
 
+    private static final int WAITING_AREA_SIZE = 5;
+
     @Autowired
     private ChargingRequestMapper mapper;
 
@@ -63,6 +65,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         Result validation = validateRequest(userId, dto == null ? null : dto.getMode(), dto == null ? null : dto.getRequestedKwh());
         if (validation != null) {
             return validation;
+        }
+        if (waitingAreaCount() >= WAITING_AREA_SIZE) {
+            return Result.error("等候区已满，无法提交新的充电请求");
         }
 
         ChargingRequest req = new ChargingRequest();
@@ -155,6 +160,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
 
         PileQueue pileQueue = findPileQueue(requestId);
         if (pileQueue != null) {
+            if ("CHARGING".equalsIgnoreCase(pileQueue.getStatus()) || "CHARGING".equalsIgnoreCase(req.getStatus())) {
+                return Result.error("正在充电的请求不能取消，请使用结束充电生成详单");
+            }
             pileQueueMapper.deleteById(pileQueue.getId());
             reindexPileQueue(pileQueue.getPileId());
             updatePileStatusAfterCancel(pileQueue.getPileId());
@@ -265,6 +273,11 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         waitingQueueMapper.insert(waitingQueue);
     }
 
+    private long waitingAreaCount() {
+        QueryWrapper<WaitingQueue> wrapper = new QueryWrapper<>();
+        return waitingQueueMapper.selectCount(wrapper);
+    }
+
     private void removeFromWaitingQueue(Long requestId) {
         QueryWrapper<WaitingQueue> wrapper = new QueryWrapper<>();
         wrapper.eq("request_id", requestId);
@@ -319,6 +332,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
             ChargingRequest request = mapper.selectById(queue.getRequestId());
             if (request != null && !"CANCELLED".equals(request.getStatus()) && !"COMPLETED".equals(request.getStatus())) {
                 request.setStatus(status);
+                if ("CHARGING".equals(status)) {
+                    request.setCreatedAt(LocalDateTime.now());
+                }
                 mapper.updateById(request);
             }
         }
@@ -380,7 +396,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         return "NONE";
     }
 
-    private int estimateWaitMinutes(ChargingRequest request) {
+    private double estimateWaitMinutes(ChargingRequest request) {
         PileQueue pileQueue = findPileQueue(request.getId());
         if (pileQueue != null) {
             return estimateWaitMinutesInPileQueue(pileQueue);
@@ -394,7 +410,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         return 0;
     }
 
-    private int estimateWaitMinutesInPileQueue(PileQueue currentQueue) {
+    private double estimateWaitMinutesInPileQueue(PileQueue currentQueue) {
         if ("CHARGING".equalsIgnoreCase(currentQueue.getStatus())) {
             return 0;
         }
@@ -403,7 +419,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         wrapper.eq("pile_id", currentQueue.getPileId())
                 .lt("position_no", currentQueue.getPositionNo())
                 .orderByAsc("position_no", "id");
-        int waitMinutes = 0;
+        double waitMinutes = 0;
         for (PileQueue queue : pileQueueMapper.selectList(wrapper)) {
             ChargingRequest request = mapper.selectById(queue.getRequestId());
             ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
@@ -411,10 +427,10 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
                     ? estimateRemainingMinutes(pile, request)
                     : estimateFullMinutes(pile, request);
         }
-        return waitMinutes;
+        return roundTwo(waitMinutes);
     }
 
-    private int estimateWaitMinutesInWaitingArea(ChargingRequest targetRequest, WaitingQueue targetWaitingQueue) {
+    private double estimateWaitMinutesInWaitingArea(ChargingRequest targetRequest, WaitingQueue targetWaitingQueue) {
         List<ChargingPile> piles = selectAvailablePiles(targetRequest.getMode());
         if (piles.isEmpty()) {
             return 0;
@@ -434,13 +450,13 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
             }
 
             PileLoad bestLoad = loads.stream()
-                    .min(Comparator.comparingInt(load -> load.minutes))
+                    .min(Comparator.comparingDouble(load -> load.minutes))
                     .orElse(null);
             if (bestLoad == null) {
                 return 0;
             }
             if (waitingQueue.getId().equals(targetWaitingQueue.getId())) {
-                return bestLoad.minutes;
+                return roundTwo(bestLoad.minutes);
             }
             bestLoad.minutes += estimateFullMinutes(bestLoad.pile, request);
         }
@@ -469,27 +485,27 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
 
         double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
         LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(requestedKwh, elapsedHours * power);
         double remainingKwh = Math.max(0, requestedKwh - chargedKwh);
 
         data.put("chargedKwh", roundOne(chargedKwh));
         data.put("remainingKwh", roundOne(remainingKwh));
-        data.put("remainingMinutes", (int) Math.ceil(remainingKwh / power * 60));
+        data.put("remainingMinutes", roundTwo(remainingKwh / power * 60));
         return data;
     }
 
-    private int estimateFullMinutes(ChargingPile pile, ChargingRequest request) {
+    private double estimateFullMinutes(ChargingPile pile, ChargingRequest request) {
         if (request == null || request.getRequestedKwh() == null) {
             return 0;
         }
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
-        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+        return roundTwo(request.getRequestedKwh() / power * 60);
     }
 
-    private int estimateRemainingMinutes(ChargingPile pile, ChargingRequest request) {
+    private double estimateRemainingMinutes(ChargingPile pile, ChargingRequest request) {
         if (request == null || request.getRequestedKwh() == null) {
             return 0;
         }
@@ -498,15 +514,15 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
         LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
         double remainingKwh = Math.max(0, request.getRequestedKwh() - elapsedHours * power);
-        return (int) Math.ceil(remainingKwh / power * 60);
+        return roundTwo(remainingKwh / power * 60);
     }
 
-    private int estimatePileLoadMinutes(ChargingPile pile) {
+    private double estimatePileLoadMinutes(ChargingPile pile) {
         QueryWrapper<PileQueue> wrapper = new QueryWrapper<>();
         wrapper.eq("pile_id", pile.getId()).orderByAsc("position_no", "id");
-        int minutes = 0;
+        double minutes = 0;
         for (PileQueue queue : pileQueueMapper.selectList(wrapper)) {
             ChargingRequest request = mapper.selectById(queue.getRequestId());
             minutes += "CHARGING".equalsIgnoreCase(queue.getStatus())
@@ -529,11 +545,15 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         return Math.round(value * 10.0) / 10.0;
     }
 
+    private double roundTwo(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
     private static class PileLoad {
         private final ChargingPile pile;
-        private int minutes;
+        private double minutes;
 
-        private PileLoad(ChargingPile pile, int minutes) {
+        private PileLoad(ChargingPile pile, double minutes) {
             this.pile = pile;
             this.minutes = minutes;
         }

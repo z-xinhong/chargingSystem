@@ -17,8 +17,8 @@ public class SystemConfigServiceImpl implements SystemConfigService {
         config.put("slowPileCount", 2);
         config.put("fastPower", 30);
         config.put("slowPower", 10);
-        config.put("waitingAreaSize", 10);
-        config.put("chargingQueueLength", 5);
+        config.put("waitingAreaSize", 5);
+        config.put("chargingQueueLength", 3);
         config.put("callingPaused", false);
         config.put("defaultSchedulePolicy", "BATCH_SHORTEST");
         config.put("defaultFaultPolicy", "PRIORITY");

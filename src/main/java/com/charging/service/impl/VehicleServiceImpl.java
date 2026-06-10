@@ -176,6 +176,9 @@ public class VehicleServiceImpl implements VehicleService {
             ChargingRequest request = chargingRequestMapper.selectById(queue.getRequestId());
             if (request != null && !"COMPLETED".equals(request.getStatus()) && !"CANCELLED".equals(request.getStatus())) {
                 request.setStatus(queue.getStatus());
+                if ("CHARGING".equals(queue.getStatus())) {
+                    request.setCreatedAt(java.time.LocalDateTime.now());
+                }
                 chargingRequestMapper.updateById(request);
             }
         }

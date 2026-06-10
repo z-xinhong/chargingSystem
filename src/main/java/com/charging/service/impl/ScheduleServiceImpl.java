@@ -30,7 +30,7 @@ import java.util.Map;
 @Service
 public class ScheduleServiceImpl implements ScheduleService {
 
-    private static final int MAX_PILE_QUEUE_SIZE = 5;
+    private static final int MAX_PILE_QUEUE_SIZE = 3;
 
     @Autowired
     private WaitingQueueMapper waitingQueueMapper;
@@ -62,28 +62,6 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
         List<Map<String, Object>> assignedVehicles = dispatchInternal(normalizedPolicy);
         return Result.success(assignedVehicles.size());
-    }
-
-    @Override
-    @Transactional
-    public Result dispatchOnce() {
-        List<Map<String, Object>> assignedVehicles = dispatchInternal("SINGLE_SHORTEST");
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("dispatchType", "ONCE");
-        data.put("assignedVehicles", assignedVehicles);
-        return Result.success(data);
-    }
-
-    @Override
-    @Transactional
-    public Result dispatchBatch() {
-        List<Map<String, Object>> assignedVehicles = dispatchInternal("BATCH_SHORTEST");
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("dispatchType", "BATCH");
-        data.put("assignedVehicles", assignedVehicles);
-        return Result.success(data);
     }
 
     @Override
@@ -145,6 +123,9 @@ public class ScheduleServiceImpl implements ScheduleService {
             pileQueueMapper.insert(pileQueue);
 
             request.setStatus(nextPosition == 1 ? "CHARGING" : "WAITING");
+            if (nextPosition == 1) {
+                request.setCreatedAt(LocalDateTime.now());
+            }
             chargingRequestMapper.updateById(request);
 
             if (nextPosition == 1) {
@@ -287,20 +268,20 @@ public class ScheduleServiceImpl implements ScheduleService {
         return totalHours;
     }
 
-    private int estimateFinishMinutes(ChargingPile pile, ChargingRequest request) {
+    private double estimateFinishMinutes(ChargingPile pile, ChargingRequest request) {
         if (request.getRequestedKwh() == null) {
             return 0;
         }
         double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
-        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+        return roundTwo(request.getRequestedKwh() / power * 60);
     }
 
-    private int estimateFullMinutes(String mode, ChargingRequest request) {
+    private double estimateFullMinutes(String mode, ChargingRequest request) {
         if (request == null || request.getRequestedKwh() == null) {
             return 0;
         }
         double power = "SLOW".equalsIgnoreCase(mode) ? 10.0 : 30.0;
-        return (int) Math.ceil(request.getRequestedKwh() / power * 60);
+        return roundTwo(request.getRequestedKwh() / power * 60);
     }
 
     private Map<String, Object> buildChargingProgress(PileQueue queue, ChargingPile pile, ChargingRequest request) {
@@ -314,18 +295,22 @@ public class ScheduleServiceImpl implements ScheduleService {
 
         double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
         LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).toMinutes()) / 60.0;
+        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
         double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
 
         data.put("chargedKwh", roundOne(chargedKwh));
         data.put("remainingKwh", roundOne(remainingKwh));
-        data.put("remainingMinutes", (int) Math.ceil(remainingKwh / power * 60));
+        data.put("remainingMinutes", roundTwo(remainingKwh / power * 60));
         return data;
     }
 
     private double roundOne(double value) {
         return Math.round(value * 10.0) / 10.0;
+    }
+
+    private double roundTwo(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 
     private void autoCompleteFinishedCharging() {

@@ -3,28 +3,32 @@
     <div class="grid four">
       <StatCard label="正常策略" value="最短完成时长" hint="等待时间 + 自身充电时间" />
       <StatCard label="故障策略" value="2 类" hint="优先级 / 时间顺序" />
-      <StatCard label="扩展策略" value="2 类" hint="单次 / 批量" />
-      <StatCard label="叫号状态" :value="callingPaused ? '暂停' : '开启'" hint="故障调度期间暂停" />
+      <StatCard label="叫号状态" :value="callingPaused ? '暂停' : '开启'" hint="按后端实时状态显示" />
+      <StatCard label="刷新频率" value="3 秒" hint="自动刷新队列快照" />
     </div>
 
     <section class="content-block">
       <div class="section-heading">
         <h3>站内调度视图</h3>
-        <button type="button" @click="loadSnapshot">刷新快照</button>
+        <div class="button-row">
+          <span class="muted-text">{{ lastUpdated ? `上次刷新 ${lastUpdated}` : '等待刷新' }}</span>
+          <button type="button" @click="loadSnapshot">刷新快照</button>
+        </div>
       </div>
 
       <div class="station-layout">
         <section class="area-panel waiting-panel">
           <div class="section-heading compact">
             <h4>等候区</h4>
-            <span>{{ waitingArea.length }}/10</span>
+            <span>{{ waitingArea.length }}/5</span>
           </div>
           <div class="vehicle-list">
-            <article class="vehicle-chip" v-for="car in waitingArea" :key="car.queueNumber">
-              <strong>{{ car.queueNumber }}</strong>
+            <article class="vehicle-chip" v-for="car in waitingArea" :key="car.queueNumber || car.requestId">
+              <strong>{{ car.queueNumber || '-' }}</strong>
               <span>{{ formatMode(car.mode) }} · 所需 {{ car.requestedKwh ?? '-' }} 度</span>
               <small>预计充电 {{ car.requiredChargeMinutes ?? '-' }} 分钟 · 用户 {{ car.userId }}</small>
             </article>
+            <p class="muted-text" v-if="!waitingArea.length">暂无等候车辆</p>
           </div>
         </section>
 
@@ -42,19 +46,21 @@
               <p>{{ formatMode(pile.type) }} · {{ pile.power }} 度/小时</p>
               <div class="queue-slots">
                 <div
-                  v-for="slot in 5"
+                  v-for="slot in 3"
                   :key="slot"
                   class="queue-slot"
                   :class="{ charging: slot === 1 && queueFor(pile.pileId)[slot - 1] }"
                 >
                   <template v-if="queueFor(pile.pileId)[slot - 1]">
                     <strong>{{ queueFor(pile.pileId)[slot - 1].queueNumber }}</strong>
-                    <span>{{ slot === 1 ? '充电中' : '等待' }}</span>
+                    <span>{{ queueFor(pile.pileId)[slot - 1].status === 'CHARGING' ? '充电中' : '等待' }}</span>
                     <small v-if="queueFor(pile.pileId)[slot - 1].status === 'CHARGING'">
-                      剩 {{ queueFor(pile.pileId)[slot - 1].remainingKwh ?? '-' }} 度 / {{ queueFor(pile.pileId)[slot - 1].remainingMinutes ?? '-' }} 分钟
+                      剩 {{ queueFor(pile.pileId)[slot - 1].remainingKwh ?? '-' }} 度 /
+                      {{ queueFor(pile.pileId)[slot - 1].remainingMinutes ?? '-' }} 分钟
                     </small>
                     <small v-else>
-                      需 {{ queueFor(pile.pileId)[slot - 1].requestedKwh ?? '-' }} 度 / {{ queueFor(pile.pileId)[slot - 1].requiredChargeMinutes ?? '-' }} 分钟
+                      需 {{ queueFor(pile.pileId)[slot - 1].requestedKwh ?? '-' }} 度 /
+                      {{ queueFor(pile.pileId)[slot - 1].requiredChargeMinutes ?? '-' }} 分钟
                     </small>
                   </template>
                   <template v-else>
@@ -63,6 +69,7 @@
                 </div>
               </div>
             </article>
+            <p class="muted-text" v-if="!piles.length">暂无充电桩快照</p>
           </div>
         </section>
       </div>
@@ -112,53 +119,33 @@
         </label>
       </div>
       <p class="muted-text">恢复后若其它同类型充电桩仍有未充电车辆，则暂停等候区叫号，合并后重新调度。</p>
-    </section>
-
-    <section class="content-block">
-      <div class="section-heading">
-        <h3>扩展调度</h3>
-        <span class="status-pill">接口预留</span>
-      </div>
-
-      <div class="strategy-grid">
-        <article class="strategy-card">
-          <h4>单次调度总充电时长最短</h4>
-          <p>充电区出现多个空位时一次叫多个号，按充电模式分配对应充电桩，使进入车辆总完成时长最短。</p>
-          <button type="button" @click="handleDispatchOnce">执行单次调度</button>
-        </article>
-        <article class="strategy-card">
-          <h4>批量调度总充电时长最短</h4>
-          <p>车辆达到全部车位容量后整批调度，不区分快慢充和到达顺序，使整批车辆总完成时长最短。</p>
-          <button type="button" @click="handleDispatchBatch">执行批量调度</button>
-        </article>
-      </div>
       <p class="feedback" v-if="message">{{ message }}</p>
     </section>
   </AppShell>
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import AppShell from '../components/AppShell.vue';
 import StatCard from '../components/StatCard.vue';
 import {
-  dispatchBatch,
-  dispatchOnce,
   getSchedulingSnapshot,
   recoverPile,
   simulateFault
 } from '../services/api';
-import { mockPileQueues, mockPiles, mockWaitingArea } from '../services/mockData';
+
+const REFRESH_INTERVAL_MS = 3000;
 
 const message = ref('');
-const piles = ref(mockPiles);
-const waitingArea = ref(mockWaitingArea);
-const pileQueues = ref(mockPileQueues);
+const piles = ref([]);
+const waitingArea = ref([]);
+const pileQueues = ref({});
+const callingPaused = ref(false);
+const lastUpdated = ref('');
+let snapshotTimer = null;
 
 const faultForm = reactive({ pileId: 3, schedulePolicy: 'PRIORITY' });
 const recoverForm = reactive({ pileId: 3 });
-
-const callingPaused = computed(() => piles.value.some((pile) => pile.status === 'FAULT'));
 
 function queueFor(pileId) {
   return pileQueues.value[pileId] || [];
@@ -169,9 +156,9 @@ async function handleFault() {
   try {
     await simulateFault(faultForm.pileId, faultForm.schedulePolicy);
     message.value = '故障调度请求已提交';
-    await loadSnapshot();
+    await loadSnapshot(false);
   } catch (error) {
-    message.value = `故障调度接口暂不可用，当前保留演示状态：${error.message}`;
+    message.value = `故障调度接口暂不可用：${error.message}`;
   }
 }
 
@@ -180,41 +167,28 @@ async function handleRecover() {
   try {
     await recoverPile(recoverForm.pileId);
     message.value = '故障恢复调度请求已提交';
-    await loadSnapshot();
+    await loadSnapshot(false);
   } catch (error) {
-    message.value = `故障恢复接口暂不可用，当前保留演示状态：${error.message}`;
+    message.value = `故障恢复接口暂不可用：${error.message}`;
   }
 }
 
-async function handleDispatchOnce() {
-  await callReservedApi(() => dispatchOnce({ mode: 'BY_MIN_TOTAL_TIME' }));
-}
-
-async function handleDispatchBatch() {
-  await callReservedApi(() => dispatchBatch({ mode: 'BY_MIN_TOTAL_TIME' }));
-}
-
-async function callReservedApi(action) {
-  message.value = '';
-  try {
-    await action();
-    message.value = '扩展调度请求已提交';
-    await loadSnapshot();
-  } catch (error) {
-    message.value = `扩展调度接口暂不可用：${error.message}`;
-  }
-}
-
-async function loadSnapshot() {
+async function loadSnapshot(showMessage = true) {
   try {
     const data = await getSchedulingSnapshot();
     const snapshot = data.snapshot || data;
-    piles.value = snapshot.piles || piles.value;
-    waitingArea.value = snapshot.waitingArea || waitingArea.value;
-    pileQueues.value = snapshot.pileQueues || pileQueues.value;
-    message.value = '调度快照已刷新';
+    piles.value = snapshot.piles || [];
+    waitingArea.value = snapshot.waitingArea || [];
+    pileQueues.value = snapshot.pileQueues || {};
+    callingPaused.value = Boolean(snapshot.pausedCalling);
+    lastUpdated.value = new Date().toLocaleTimeString();
+    if (showMessage) {
+      message.value = '调度快照已刷新';
+    }
   } catch (error) {
-    message.value = '后端暂未连接，当前展示演示调度视图';
+    if (showMessage) {
+      message.value = `调度快照暂时无法刷新：${error.message}`;
+    }
   }
 }
 
@@ -239,4 +213,16 @@ function statusClass(status) {
     'status-active': status === 'CHARGING'
   };
 }
+
+onMounted(() => {
+  loadSnapshot();
+  snapshotTimer = window.setInterval(() => loadSnapshot(false), REFRESH_INTERVAL_MS);
+});
+
+onUnmounted(() => {
+  if (snapshotTimer) {
+    window.clearInterval(snapshotTimer);
+    snapshotTimer = null;
+  }
+});
 </script>

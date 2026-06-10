@@ -17,12 +17,9 @@ export const startPile = (pileId) => post(`/pile/start/${pileId}`);
 export const stopPile = (pileId) => post(`/pile/stop/${pileId}`);
 export const simulateFault = (pileId, schedulePolicy) =>
   post(`/fault/simulate/${pileId}`, { schedulePolicy });
-
-// 调度中心预留接口：接口文档当前只明确了故障模拟接口，下面路径用于后端补充后直接接入。
-export const getSchedulingSnapshot = () => get('/schedule/snapshot');
-export const dispatchOnce = (payload) => post('/schedule/dispatch-once', payload);
-export const dispatchBatch = (payload) => post('/schedule/dispatch-batch', payload);
 export const recoverPile = (pileId) => post(`/fault/recover/${pileId}`, { schedulePolicy: 'TIME_ORDER' });
+
+export const getSchedulingSnapshot = () => get('/schedule/snapshot');
 export const getReports = (period = 'DAY') => get(`/report/list?period=${period}`);
 export const getVehicles = (keyword = '') => get(`/vehicle/list?keyword=${encodeURIComponent(keyword)}`);
 export const saveVehicle = (payload) => post('/vehicle/save', payload);

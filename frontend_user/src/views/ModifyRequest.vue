@@ -43,6 +43,10 @@ function canModify(request) {
   return request.location === 'WAITING_AREA';
 }
 
+function canCancel(request) {
+  return request.status !== 'CHARGING' && request.location !== 'CHARGING_AREA';
+}
+
 function locationText(location) {
   const map = {
     WAITING_AREA: '等候区',
@@ -55,7 +59,7 @@ function locationText(location) {
 
 async function handleModify(request) {
   if (!canModify(request)) {
-    ElMessage.warning('充电区请求不允许修改，可取消后重新提交');
+    ElMessage.warning('充电区请求不允许修改');
     return;
   }
 
@@ -97,6 +101,11 @@ async function handleModify(request) {
 }
 
 async function handleCancel(request) {
+  if (!canCancel(request)) {
+    ElMessage.warning('正在充电的请求不能取消，请到当前排队状态页面点击结束充电');
+    return;
+  }
+
   try {
     await ElMessageBox.confirm(`确定要取消请求 ${request.requestId} 吗？`, '取消请求', {
       type: 'warning',
@@ -135,9 +144,8 @@ onMounted(loadRequests);
 
     <el-alert type="info" show-icon :closable="false" class="rule-alert">
       <template #title>
-        等候区允许修改充电模式，修改后重新生成排队号并进入对应队列末尾；
-        等候区允许修改充电量，排队号不变；
-        充电区不允许修改请求；等候区和充电区均允许取消。
+        等候区允许修改充电模式，修改后重新生成排队号；等候区允许修改充电量，排队号不变。
+        充电区不允许修改；正在充电的请求不能取消，只能在当前排队状态页面结束充电。
       </template>
     </el-alert>
 
@@ -184,7 +192,7 @@ onMounted(loadRequests);
             </el-radio-group>
           </el-form-item>
 
-          <el-form-item label="新请求充电量">
+          <el-form-item label="新请求电量">
             <el-input-number
               v-model="ensureForm(request.requestId).requestedKwh"
               :min="1"
@@ -204,12 +212,16 @@ onMounted(loadRequests);
               提交修改
             </el-button>
             <el-button
+              v-if="canCancel(request)"
               type="danger"
               plain
               :loading="actionLoadingId === request.requestId"
               @click="handleCancel(request)"
             >
               取消请求
+            </el-button>
+            <el-button v-else type="danger" plain disabled>
+              正在充电，请使用结束充电
             </el-button>
           </el-form-item>
         </el-form>

@@ -80,7 +80,7 @@ public class BillingServiceImpl implements BillingService {
             return null;
         }
 
-        Bill bill = createBillAndFinishRequest(request, currentQueue);
+        Bill bill = createFaultInterruptedBill(request, currentQueue);
         return bill.getId();
     }
 
@@ -166,12 +166,42 @@ public class BillingServiceImpl implements BillingService {
 
     private Bill createBillAndFinishRequest(ChargingRequest request, PileQueue currentQueue) {
         ChargingPile pile = chargingPileMapper.selectById(currentQueue.getPileId());
-        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
-                ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
-                : pile.getPower();
-        double actualKwh = roundDouble(request.getRequestedKwh() == null ? 0 : request.getRequestedKwh());
-        double durationHours = roundDouble(actualKwh / power);
+        ChargeSnapshot snapshot = calculateChargedSnapshot(request, pile);
+        Bill bill = insertBill(request, currentQueue, pile, snapshot.durationHours, snapshot.actualKwh);
 
+        request.setStatus("COMPLETED");
+        chargingRequestMapper.updateById(request);
+
+        pileQueueMapper.deleteById(currentQueue.getId());
+        reindexPileQueue(currentQueue.getPileId());
+        updatePileStatistics(pile, snapshot.durationHours, snapshot.actualKwh);
+        return bill;
+    }
+
+    private Bill createFaultInterruptedBill(ChargingRequest request, PileQueue currentQueue) {
+        ChargingPile pile = chargingPileMapper.selectById(currentQueue.getPileId());
+        ChargeSnapshot snapshot = calculateChargedSnapshot(request, pile);
+        Bill bill = insertBill(request, currentQueue, pile, snapshot.durationHours, snapshot.actualKwh);
+
+        double remainingKwh = roundDouble(Math.max(0, (request.getRequestedKwh() == null ? 0 : request.getRequestedKwh()) - snapshot.actualKwh));
+        updatePileStatistics(pile, snapshot.durationHours, snapshot.actualKwh);
+
+        if (remainingKwh <= 0) {
+            request.setRequestedKwh(0.0);
+            request.setStatus("COMPLETED");
+            chargingRequestMapper.updateById(request);
+            pileQueueMapper.deleteById(currentQueue.getId());
+            reindexPileQueue(currentQueue.getPileId());
+        } else {
+            request.setRequestedKwh(remainingKwh);
+            request.setStatus("FAULT_STOPPED");
+            request.setCreatedAt(LocalDateTime.now());
+            chargingRequestMapper.updateById(request);
+        }
+        return bill;
+    }
+
+    private Bill insertBill(ChargingRequest request, PileQueue currentQueue, ChargingPile pile, double durationHours, double actualKwh) {
         BigDecimal kwh = BigDecimal.valueOf(actualKwh);
         BigDecimal electricityFee = kwh.multiply(currentElectricityPrice()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal serviceFee = kwh.multiply(SERVICE_PRICE).setScale(2, RoundingMode.HALF_UP);
@@ -187,14 +217,21 @@ public class BillingServiceImpl implements BillingService {
         bill.setTotalFee(totalFee);
         bill.setCreatedAt(LocalDateTime.now());
         billMapper.insert(bill);
-
-        request.setStatus("COMPLETED");
-        chargingRequestMapper.updateById(request);
-
-        pileQueueMapper.deleteById(currentQueue.getId());
-        reindexPileQueue(currentQueue.getPileId());
-        updatePileStatistics(pile, durationHours, actualKwh);
         return bill;
+    }
+
+    private ChargeSnapshot calculateChargedSnapshot(ChargingRequest request, ChargingPile pile) {
+        double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
+                ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
+                : pile.getPower();
+        double requestedKwh = request.getRequestedKwh() == null ? 0 : request.getRequestedKwh();
+        long elapsedSeconds = request.getCreatedAt() == null
+                ? 0
+                : Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).getSeconds());
+        double chargedBySeconds = elapsedSeconds / 3600.0 * power;
+        double actualKwh = roundKwh(Math.min(requestedKwh, chargedBySeconds));
+        double durationHours = roundHours(actualKwh / power);
+        return new ChargeSnapshot(durationHours, actualKwh);
     }
 
     private PileQueue findPileQueue(Long requestId) {
@@ -218,6 +255,9 @@ public class BillingServiceImpl implements BillingService {
             ChargingRequest request = chargingRequestMapper.selectById(queue.getRequestId());
             if (request != null && !"COMPLETED".equals(request.getStatus()) && !"CANCELLED".equals(request.getStatus())) {
                 request.setStatus(status);
+                if ("CHARGING".equals(status)) {
+                    request.setCreatedAt(LocalDateTime.now());
+                }
                 chargingRequestMapper.updateById(request);
             }
         }
@@ -274,17 +314,17 @@ public class BillingServiceImpl implements BillingService {
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
-        long elapsedMinutes = Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).toMinutes());
-        long requiredMinutes = Math.max(1L, (long) Math.ceil(request.getRequestedKwh() / power * 60));
-        return elapsedMinutes >= requiredMinutes;
+        long elapsedSeconds = Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).getSeconds());
+        long requiredSeconds = Math.max(1L, (long) Math.ceil(request.getRequestedKwh() / power * 3600));
+        return elapsedSeconds >= requiredSeconds;
     }
 
     private Map<String, Object> toBillResponse(Bill bill) {
         LocalDateTime endTime = bill.getCreatedAt();
         LocalDateTime startTime = null;
         if (endTime != null && bill.getDurationHours() != null) {
-            long durationMinutes = Math.max(1L, Math.round(bill.getDurationHours() * 60));
-            startTime = endTime.minusMinutes(durationMinutes);
+            long durationSeconds = Math.max(0L, Math.round(bill.getDurationHours() * 3600));
+            startTime = endTime.minusSeconds(durationSeconds);
         }
 
         Map<String, Object> data = new HashMap<>();
@@ -305,5 +345,23 @@ public class BillingServiceImpl implements BillingService {
 
     private double roundDouble(double value) {
         return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private double roundKwh(double value) {
+        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private double roundHours(double value) {
+        return BigDecimal.valueOf(value).setScale(6, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private static class ChargeSnapshot {
+        private final double durationHours;
+        private final double actualKwh;
+
+        private ChargeSnapshot(double durationHours, double actualKwh) {
+            this.durationHours = durationHours;
+            this.actualKwh = actualKwh;
+        }
     }
 }
