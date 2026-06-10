@@ -386,6 +386,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
     }
 
     private String requestLocation(ChargingRequest request) {
+        if ("BATCH_PENDING".equalsIgnoreCase(request.getStatus())) {
+            return "BATCH_PENDING";
+        }
         PileQueue pileQueue = findPileQueue(request.getId());
         if (pileQueue != null) {
             return "CHARGING".equalsIgnoreCase(pileQueue.getStatus()) ? "CHARGING_AREA" : "PILE_QUEUE";

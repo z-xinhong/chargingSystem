@@ -1,7 +1,8 @@
 export function formatMode(mode) {
   const modeMap = {
     FAST: '快充',
-    SLOW: '慢充'
+    SLOW: '慢充',
+    BATCH: '批量调度'
   };
 
   return modeMap[mode] || mode || '-';
@@ -13,7 +14,8 @@ export function formatStatus(status) {
     CHARGING: '充电中',
     COMPLETED: '已完成',
     CANCELLED: '已取消',
-    FAULT_STOPPED: '故障停止'
+    FAULT_STOPPED: '故障停止',
+    BATCH_PENDING: '待调度'
   };
 
   return statusMap[status] || status || '-';
@@ -25,7 +27,8 @@ export function getStatusTagType(status) {
     CHARGING: 'primary',
     COMPLETED: 'success',
     CANCELLED: 'info',
-    FAULT_STOPPED: 'danger'
+    FAULT_STOPPED: 'danger',
+    BATCH_PENDING: 'info'
   };
 
   return statusTagTypeMap[status] || 'info';

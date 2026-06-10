@@ -38,7 +38,7 @@ async function handleLogin() {
       password: form.password
     });
 
-    const { token, userId, username, role } = res.data || {};
+    const { token, userId, username, role, phone, plateNo, batteryCapacity } = res.data || {};
 
     if (!token) {
       ElMessage.error('登录成功但未获取到 token');
@@ -60,6 +60,9 @@ async function handleLogin() {
     sessionStorage.setItem('userId', String(userId ?? ''));
     sessionStorage.setItem('username', username || form.username);
     sessionStorage.setItem('role', role);
+    sessionStorage.setItem('phone', phone || '');
+    sessionStorage.setItem('plateNo', plateNo || '');
+    sessionStorage.setItem('batteryCapacity', batteryCapacity == null ? '' : String(batteryCapacity));
 
     ElMessage.success('登录成功');
     router.push('/home');

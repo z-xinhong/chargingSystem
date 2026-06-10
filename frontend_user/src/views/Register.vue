@@ -13,6 +13,7 @@ const form = reactive({
   username: '',
   password: '',
   phone: '',
+  plateNo: '',
   batteryCapacity: null
 });
 
@@ -60,6 +61,7 @@ async function handleRegister() {
       username: form.username,
       password: form.password,
       phone: form.phone,
+      plateNo: form.plateNo,
       batteryCapacity: form.batteryCapacity
     });
 
@@ -114,6 +116,14 @@ async function handleRegister() {
           <el-input
             v-model="form.phone"
             placeholder="请输入手机号（可选）"
+            size="large"
+          />
+        </el-form-item>
+
+        <el-form-item label="车牌号" prop="plateNo">
+          <el-input
+            v-model="form.plateNo"
+            placeholder="请输入车牌号（可选）"
             size="large"
           />
         </el-form-item>

@@ -5,6 +5,7 @@ import BillList from '../views/BillList.vue';
 import Home from '../views/Home.vue';
 import Login from '../views/Login.vue';
 import ModifyRequest from '../views/ModifyRequest.vue';
+import Profile from '../views/Profile.vue';
 import QueueStatus from '../views/QueueStatus.vue';
 import Register from '../views/Register.vue';
 import SubmitRequest from '../views/SubmitRequest.vue';
@@ -71,6 +72,14 @@ const routes = [
         component: BillList,
         meta: {
           title: '充电详单列表'
+        }
+      },
+      {
+        path: '/profile',
+        name: 'Profile',
+        component: Profile,
+        meta: {
+          title: '个人信息'
         }
       }
     ]

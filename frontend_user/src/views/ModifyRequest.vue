@@ -52,6 +52,7 @@ function locationText(location) {
     WAITING_AREA: '等候区',
     PILE_QUEUE: '充电区等待队列',
     CHARGING_AREA: '充电中',
+    BATCH_PENDING: '待调度',
     NONE: '未在队列'
   };
   return map[location] || location || '-';

@@ -6,6 +6,9 @@ const router = useRouter();
 
 const username = computed(() => sessionStorage.getItem('username') || '未登录用户');
 const userId = computed(() => sessionStorage.getItem('userId') || '-');
+const phone = computed(() => sessionStorage.getItem('phone') || '-');
+const plateNo = computed(() => sessionStorage.getItem('plateNo') || '-');
+const batteryCapacity = computed(() => sessionStorage.getItem('batteryCapacity') || '-');
 const currentRequestId = ref('');
 const hasCurrentRequest = computed(() => Boolean(currentRequestId.value));
 let removeRouteHook = null;
@@ -38,6 +41,7 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="card-header">
           <span>欢迎首页</span>
+          <el-button type="primary" plain @click="goTo('/profile')">修改个人信息</el-button>
         </div>
       </template>
 
@@ -50,6 +54,15 @@ onBeforeUnmount(() => {
         </el-descriptions-item>
         <el-descriptions-item label="用户 ID">
           {{ userId }}
+        </el-descriptions-item>
+        <el-descriptions-item label="手机号">
+          {{ phone }}
+        </el-descriptions-item>
+        <el-descriptions-item label="车牌号">
+          {{ plateNo }}
+        </el-descriptions-item>
+        <el-descriptions-item label="电池容量">
+          {{ batteryCapacity }} 度
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -65,7 +78,7 @@ onBeforeUnmount(() => {
 
           <div v-if="hasCurrentRequest" class="status-box success-box">
             <p class="status-title">当前存在未结束充电请求</p>
-            <p class="status-desc">最近请求编号：{{ currentRequestId }}，可进入排队状态查看全部请求</p>
+            <p class="status-desc">最近请求编号：{{ currentRequestId }}，可进入排队状态查看全部请求。</p>
           </div>
 
           <div v-else class="status-box empty-box">
@@ -110,6 +123,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   font-weight: 600;
   color: #1f2937;
 }

@@ -14,7 +14,8 @@ const menuList = [
   { index: '/submit', title: '提交充电请求' },
   { index: '/queue', title: '当前排队状态' },
   { index: '/modify', title: '修改/取消请求' },
-  { index: '/bills', title: '充电详单' }
+  { index: '/bills', title: '充电详单' },
+  { index: '/profile', title: '个人信息' }
 ];
 
 function handleSelect(path) {

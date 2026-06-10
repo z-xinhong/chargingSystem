@@ -10,4 +10,10 @@ public interface SystemConfigService {
     boolean isCallingPaused();
 
     void setCallingPaused(boolean callingPaused);
+
+    String getScheduleMode();
+
+    boolean isScheduleModeLocked();
+
+    boolean selectScheduleMode(String scheduleMode);
 }

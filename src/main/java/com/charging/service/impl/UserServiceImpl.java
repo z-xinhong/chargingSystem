@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.charging.common.Result;
 import com.charging.dto.LoginDTO;
 import com.charging.dto.RegisterDTO;
+import com.charging.dto.UserProfileDTO;
 import com.charging.entity.User;
 import com.charging.mapper.UserMapper;
 import com.charging.service.UserService;
@@ -46,6 +47,7 @@ public class UserServiceImpl implements UserService {
         user.setUsername(dto.getUsername());
         user.setPassword(dto.getPassword());
         user.setPhone(dto.getPhone());
+        user.setPlateNo(dto.getPlateNo());
         user.setBatteryCapacity(dto.getBatteryCapacity());
         user.setRole("USER");
         user.setCreatedAt(LocalDateTime.now());
@@ -79,7 +81,53 @@ public class UserServiceImpl implements UserService {
         data.put("username", user.getUsername());
         data.put("token", token);
         data.put("role", role);
+        data.put("phone", user.getPhone());
+        data.put("plateNo", user.getPlateNo());
+        data.put("batteryCapacity", user.getBatteryCapacity());
         return Result.success(data);
+    }
+
+    @Override
+    public Result profile(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return Result.error("用户不存在");
+        }
+
+        return Result.success(userProfileData(user));
+    }
+
+    @Override
+    public Result updateProfile(Long userId, UserProfileDTO dto) {
+        if (dto == null) {
+            return Result.error("参数错误");
+        }
+        if (dto.getBatteryCapacity() == null || dto.getBatteryCapacity() <= 0) {
+            return Result.error("电池容量必须大于 0");
+        }
+
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return Result.error("用户不存在");
+        }
+
+        user.setPhone(dto.getPhone());
+        user.setPlateNo(dto.getPlateNo());
+        user.setBatteryCapacity(dto.getBatteryCapacity());
+        userMapper.updateById(user);
+
+        return Result.success(userProfileData(user));
+    }
+
+    private Map<String, Object> userProfileData(User user) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("userId", user.getId());
+        data.put("username", user.getUsername());
+        data.put("phone", user.getPhone());
+        data.put("plateNo", user.getPlateNo());
+        data.put("batteryCapacity", user.getBatteryCapacity());
+        data.put("role", user.getRole());
+        return data;
     }
 
     private boolean isBlank(String value) {
