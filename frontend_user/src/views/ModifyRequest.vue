@@ -44,7 +44,10 @@ function canModify(request) {
 }
 
 function canCancel(request) {
-  return request.status !== 'CHARGING' && request.location !== 'CHARGING_AREA';
+  return request.status !== 'CHARGING'
+    && request.status !== 'CANCELLED'
+    && request.status !== 'COMPLETED'
+    && request.location !== 'CHARGING_AREA';
 }
 
 function locationText(location) {

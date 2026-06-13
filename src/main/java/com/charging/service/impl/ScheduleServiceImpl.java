@@ -15,6 +15,7 @@ import com.charging.mapper.UserMapper;
 import com.charging.mapper.WaitingQueueMapper;
 import com.charging.service.BillingService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SimulatedClockService;
 import com.charging.service.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -61,6 +62,9 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Autowired
     private BillingService billingService;
 
+    @Autowired
+    private SimulatedClockService simulatedClockService;
+
     @Override
     @Transactional
     public Result dispatch(String policy) {
@@ -86,10 +90,10 @@ public class ScheduleServiceImpl implements ScheduleService {
     public Result selectMode(String mode) {
         String normalizedMode = normalizeScheduleMode(mode);
         if (normalizedMode == null) {
-            return Result.error("调度方式必须是 NORMAL、SINGLE_SHORTEST 或 BATCH_SHORTEST");
+            return Result.error("璋冨害鏂瑰紡蹇呴』鏄?NORMAL銆丼INGLE_SHORTEST 鎴?BATCH_SHORTEST");
         }
         if (!systemConfigService.selectScheduleMode(normalizedMode)) {
-            return Result.error("调度方式已锁定，本次后端启动期间不能再次修改");
+            return Result.error("璋冨害鏂瑰紡宸查攣瀹氾紝鏈鍚庣鍚姩鏈熼棿涓嶈兘鍐嶆淇敼");
         }
         return Result.success(Map.of(
                 "scheduleMode", systemConfigService.getScheduleMode(),
@@ -102,11 +106,11 @@ public class ScheduleServiceImpl implements ScheduleService {
     public Result bulkCreateRequests(AdminBulkRequestDTO dto) {
         String scheduleMode = systemConfigService.getScheduleMode();
         if (MODE_NORMAL.equals(scheduleMode)) {
-            return Result.error("正常调度模式不支持管理员批量创建请求");
+            return Result.error("姝ｅ父璋冨害妯″紡涓嶆敮鎸佺鐞嗗憳鎵归噺鍒涘缓璇锋眰");
         }
         if (dto == null || dto.getRequestedKwh() == null || dto.getRequestedKwh() <= 0
                 || dto.getCount() == null || dto.getCount() <= 0) {
-            return Result.error("充电度数和请求数量必须大于 0");
+            return Result.error("鍏呯數搴︽暟鍜岃姹傛暟閲忓繀椤诲ぇ浜?0");
         }
 
         List<User> users = selectNormalUsers();
@@ -114,13 +118,24 @@ public class ScheduleServiceImpl implements ScheduleService {
             return Result.error("没有可绑定的普通用户");
         }
 
+        String singleRequestMode = null;
+        if (MODE_SINGLE.equals(scheduleMode)) {
+            singleRequestMode = normalizeRequestMode(dto.getMode());
+            if (singleRequestMode == null) {
+                return Result.error("单次调度需要选择 FAST 或 SLOW");
+            }
+        }
+
         List<Map<String, Object>> created = new ArrayList<>();
+        int availableCapacity = MODE_SINGLE.equals(scheduleMode) ? availableSingleModeCapacity(singleRequestMode) : Integer.MAX_VALUE;
+        int acceptedCount = 0;
+        int cancelledCount = 0;
         for (int i = 0; i < dto.getCount(); i++) {
             User user = users.get(i % users.size());
             ChargingRequest request = new ChargingRequest();
             request.setUserId(user.getId());
             request.setRequestedKwh(dto.getRequestedKwh());
-            request.setCreatedAt(LocalDateTime.now());
+            request.setCreatedAt(simulatedClockService.now());
 
             if (MODE_BATCH.equals(scheduleMode)) {
                 request.setMode("FAST");
@@ -129,19 +144,27 @@ public class ScheduleServiceImpl implements ScheduleService {
                 request.setStatus(STATUS_BATCH_PENDING);
                 chargingRequestMapper.insert(request);
             } else {
-                String requestMode = normalizeRequestMode(dto.getMode());
-                if (requestMode == null) {
-                    return Result.error("单次调度需要选择 FAST 或 SLOW");
-                }
+                String requestMode = singleRequestMode;
                 request.setMode(requestMode);
                 request.setQueueType(requestMode);
                 request.setQueueNumber(nextQueueNumber(requestMode));
-                request.setStatus("WAITING");
-                chargingRequestMapper.insert(request);
-                addToWaitingQueue(request);
+                if (acceptedCount < availableCapacity) {
+                    request.setStatus("WAITING");
+                    chargingRequestMapper.insert(request);
+                    addToWaitingQueue(request);
+                    acceptedCount++;
+                } else {
+                    request.setStatus("CANCELLED");
+                    chargingRequestMapper.insert(request);
+                    cancelledCount++;
+                }
             }
 
-            created.add(requestData(request, user));
+            Map<String, Object> requestData = requestData(request, user);
+            if ("CANCELLED".equalsIgnoreCase(request.getStatus())) {
+                requestData.put("message", "系统暂无空位，未进入等候区");
+            }
+            created.add(requestData);
         }
 
         List<Map<String, Object>> assignedVehicles = MODE_BATCH.equals(scheduleMode)
@@ -150,6 +173,8 @@ public class ScheduleServiceImpl implements ScheduleService {
 
         Map<String, Object> data = new HashMap<>();
         data.put("createdCount", created.size());
+        data.put("acceptedCount", MODE_BATCH.equals(scheduleMode) ? created.size() : acceptedCount);
+        data.put("cancelledCount", cancelledCount);
         data.put("requests", created);
         data.put("assignedVehicles", assignedVehicles);
         return Result.success(data);
@@ -168,6 +193,7 @@ public class ScheduleServiceImpl implements ScheduleService {
         snapshot.put("scheduleModeLocked", systemConfigService.isScheduleModeLocked());
         snapshot.put("batchPending", buildBatchPending());
         snapshot.put("batchRequiredCount", batchRequiredCount());
+        snapshot.put("simulatedTime", simulatedClockService.snapshot());
 
         Map<String, Object> data = new HashMap<>();
         data.put("snapshot", snapshot);
@@ -219,7 +245,7 @@ public class ScheduleServiceImpl implements ScheduleService {
 
             request.setStatus(nextPosition == 1 ? "CHARGING" : "WAITING");
             if (nextPosition == 1) {
-                request.setCreatedAt(LocalDateTime.now());
+                request.setCreatedAt(simulatedClockService.now());
             }
             chargingRequestMapper.updateById(request);
 
@@ -345,7 +371,7 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
         request.setStatus(pileQueue.getStatus());
         if (nextPosition == 1) {
-            request.setCreatedAt(LocalDateTime.now());
+            request.setCreatedAt(simulatedClockService.now());
         }
         chargingRequestMapper.updateById(request);
 
@@ -475,6 +501,25 @@ public class ScheduleServiceImpl implements ScheduleService {
 
     private int batchRequiredCount() {
         return Math.toIntExact(chargingPileMapper.selectCount(null)) * MAX_PILE_QUEUE_SIZE + WAITING_AREA_SIZE;
+    }
+
+    private int availableSingleModeCapacity(String mode) {
+        QueryWrapper<ChargingPile> pileWrapper = new QueryWrapper<>();
+        pileWrapper.eq("type", mode)
+                .ne("status", "FAULT")
+                .ne("status", "OFFLINE");
+        List<ChargingPile> piles = chargingPileMapper.selectList(pileWrapper);
+
+        int pileSlots = 0;
+        for (ChargingPile pile : piles) {
+            pileSlots += Math.max(0, MAX_PILE_QUEUE_SIZE - activeQueueSize(pile.getId()));
+        }
+
+        QueryWrapper<WaitingQueue> waitingWrapper = new QueryWrapper<>();
+        int waitingQueueCount = Math.toIntExact(waitingQueueMapper.selectCount(waitingWrapper));
+        int waitingSlots = Math.max(0, WAITING_AREA_SIZE - waitingQueueCount);
+
+        return pileSlots + waitingSlots;
     }
 
     private double requestedKwh(Long requestId) {
@@ -679,8 +724,8 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
 
         double power = effectivePower(pile, request);
-        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
+        LocalDateTime startTime = request.getCreatedAt() == null ? simulatedClockService.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, simulatedClockService.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
         double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
 
@@ -728,3 +773,4 @@ public class ScheduleServiceImpl implements ScheduleService {
         }
     }
 }
+

@@ -13,6 +13,7 @@ import com.charging.mapper.UserMapper;
 import com.charging.service.BillingService;
 import com.charging.service.PileService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SimulatedClockService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -43,6 +44,9 @@ public class PileServiceImpl implements PileService {
 
     @Autowired
     private ScheduleService scheduleService;
+
+    @Autowired
+    private SimulatedClockService simulatedClockService;
 
     @Override
     public Result status() {
@@ -143,8 +147,8 @@ public class PileServiceImpl implements PileService {
 
         ChargingPile pile = chargingPileMapper.selectById(queue.getPileId());
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
-        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
+        LocalDateTime startTime = request.getCreatedAt() == null ? simulatedClockService.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, simulatedClockService.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(request.getRequestedKwh(), elapsedHours * power);
         double remainingKwh = Math.max(0, request.getRequestedKwh() - chargedKwh);
 

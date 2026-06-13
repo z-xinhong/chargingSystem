@@ -30,3 +30,10 @@ export function updateProfile(data) {
     data
   });
 }
+
+export function getCurrentTime() {
+  return request({
+    url: '/time/current',
+    method: 'get'
+  });
+}

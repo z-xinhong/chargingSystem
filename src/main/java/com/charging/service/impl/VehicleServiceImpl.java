@@ -14,6 +14,7 @@ import com.charging.mapper.ChargingRequestMapper;
 import com.charging.mapper.PileQueueMapper;
 import com.charging.mapper.UserMapper;
 import com.charging.mapper.WaitingQueueMapper;
+import com.charging.service.SimulatedClockService;
 import com.charging.service.VehicleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,9 @@ public class VehicleServiceImpl implements VehicleService {
 
     @Autowired
     private BillMapper billMapper;
+
+    @Autowired
+    private SimulatedClockService simulatedClockService;
 
     @Override
     public Result list(String keyword) {
@@ -177,7 +181,7 @@ public class VehicleServiceImpl implements VehicleService {
             if (request != null && !"COMPLETED".equals(request.getStatus()) && !"CANCELLED".equals(request.getStatus())) {
                 request.setStatus(queue.getStatus());
                 if ("CHARGING".equals(queue.getStatus())) {
-                    request.setCreatedAt(java.time.LocalDateTime.now());
+                    request.setCreatedAt(simulatedClockService.now());
                 }
                 chargingRequestMapper.updateById(request);
             }

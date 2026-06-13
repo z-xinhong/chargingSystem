@@ -7,6 +7,7 @@ import com.charging.dto.RegisterDTO;
 import com.charging.dto.UserProfileDTO;
 import com.charging.entity.User;
 import com.charging.mapper.UserMapper;
+import com.charging.service.SimulatedClockService;
 import com.charging.service.UserService;
 import com.charging.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     private UserMapper userMapper;
+
+    @Autowired
+    private SimulatedClockService simulatedClockService;
 
     @Override
     public Result register(RegisterDTO dto) {
@@ -50,7 +54,7 @@ public class UserServiceImpl implements UserService {
         user.setPlateNo(dto.getPlateNo());
         user.setBatteryCapacity(dto.getBatteryCapacity());
         user.setRole("USER");
-        user.setCreatedAt(LocalDateTime.now());
+        user.setCreatedAt(simulatedClockService.now());
         userMapper.insert(user);
 
         Map<String, Object> data = new HashMap<>();

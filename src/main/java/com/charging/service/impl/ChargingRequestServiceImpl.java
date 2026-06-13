@@ -17,6 +17,7 @@ import com.charging.mapper.WaitingQueueMapper;
 import com.charging.service.BillingService;
 import com.charging.service.ChargingRequestService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SimulatedClockService;
 import com.charging.service.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
     @Autowired
     private BillingService billingService;
 
+    @Autowired
+    private SimulatedClockService simulatedClockService;
+
     @Override
     @Transactional
     public Result submit(Long userId, RequestDTO dto) {
@@ -77,7 +81,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         req.setQueueType(req.getMode());
         req.setStatus("WAITING");
         req.setQueueNumber(nextQueueNumber(req.getMode()));
-        req.setCreatedAt(LocalDateTime.now());
+        req.setCreatedAt(simulatedClockService.now());
         mapper.insert(req);
 
         addToWaitingQueue(req);
@@ -203,7 +207,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
     public Result listActive(Long userId) {
         QueryWrapper<ChargingRequest> wrapper = new QueryWrapper<>();
         wrapper.eq("user_id", userId)
-                .notIn("status", "COMPLETED", "CANCELLED")
+                .ne("status", "COMPLETED")
                 .orderByDesc("created_at");
         List<ChargingRequest> requests = mapper.selectList(wrapper);
 
@@ -333,7 +337,7 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
             if (request != null && !"CANCELLED".equals(request.getStatus()) && !"COMPLETED".equals(request.getStatus())) {
                 request.setStatus(status);
                 if ("CHARGING".equals(status)) {
-                    request.setCreatedAt(LocalDateTime.now());
+                    request.setCreatedAt(simulatedClockService.now());
                 }
                 mapper.updateById(request);
             }
@@ -378,6 +382,9 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         data.put("status", req.getStatus());
         data.put("requestedKwh", req.getRequestedKwh());
         data.put("location", requestLocation(req));
+        if ("CANCELLED".equalsIgnoreCase(req.getStatus())) {
+            data.put("message", "订单已取消，未进入排队或充电");
+        }
         if (includeEstimate) {
             data.put("estimatedWaitMinutes", estimateWaitMinutes(req));
             data.putAll(buildChargingProgress(req));
@@ -487,8 +494,8 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         }
 
         double power = pile.getPower() == null || pile.getPower() <= 0 ? 1 : pile.getPower();
-        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
+        LocalDateTime startTime = request.getCreatedAt() == null ? simulatedClockService.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, simulatedClockService.now()).getSeconds()) / 3600.0;
         double chargedKwh = Math.min(requestedKwh, elapsedHours * power);
         double remainingKwh = Math.max(0, requestedKwh - chargedKwh);
 
@@ -516,8 +523,8 @@ public class ChargingRequestServiceImpl implements ChargingRequestService {
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
-        LocalDateTime startTime = request.getCreatedAt() == null ? LocalDateTime.now() : request.getCreatedAt();
-        double elapsedHours = Math.max(0, Duration.between(startTime, LocalDateTime.now()).getSeconds()) / 3600.0;
+        LocalDateTime startTime = request.getCreatedAt() == null ? simulatedClockService.now() : request.getCreatedAt();
+        double elapsedHours = Math.max(0, Duration.between(startTime, simulatedClockService.now()).getSeconds()) / 3600.0;
         double remainingKwh = Math.max(0, request.getRequestedKwh() - elapsedHours * power);
         return roundTwo(remainingKwh / power * 60);
     }

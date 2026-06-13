@@ -28,3 +28,4 @@ export const saveVehicle = (payload) => post('/vehicle/save', payload);
 export const deleteVehicle = (userId) => del(`/vehicle/delete?userId=${userId}`);
 export const getSystemConfig = () => get('/config/system');
 export const saveSystemConfig = (payload) => post('/config/system', payload);
+export const getCurrentTime = () => get('/time/current');

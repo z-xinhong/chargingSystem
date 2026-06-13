@@ -5,6 +5,7 @@ import com.charging.common.Result;
 import com.charging.entity.Bill;
 import com.charging.mapper.BillMapper;
 import com.charging.service.ReportService;
+import com.charging.service.SimulatedClockService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,9 @@ public class ReportServiceImpl implements ReportService {
 
     @Autowired
     private BillMapper billMapper;
+
+    @Autowired
+    private SimulatedClockService simulatedClockService;
 
     @Override
     public Result list(String period) {
@@ -49,7 +53,7 @@ public class ReportServiceImpl implements ReportService {
     }
 
     private String periodValue(Bill bill, String period) {
-        LocalDate date = bill.getCreatedAt() == null ? LocalDate.now() : bill.getCreatedAt().toLocalDate();
+        LocalDate date = bill.getCreatedAt() == null ? simulatedClockService.today() : bill.getCreatedAt().toLocalDate();
         if ("MONTH".equals(period)) {
             return String.format("%d-%02d", date.getYear(), date.getMonthValue());
         }

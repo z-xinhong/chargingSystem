@@ -77,7 +77,10 @@
             <td>{{ item.username || item.userId }}</td>
             <td>{{ formatMode(item.queueType || item.mode) }}</td>
             <td>{{ item.requestedKwh }} 度</td>
-            <td>{{ formatRequestStatus(item.status) }}</td>
+            <td>
+              {{ formatRequestStatus(item.status) }}
+              <small v-if="item.message"> · {{ item.message }}</small>
+            </td>
           </tr>
           <tr v-if="!createdRequests.length">
             <td colspan="6">暂无本次批量创建结果</td>
@@ -284,7 +287,11 @@ async function handleBulkCreate() {
     }
     const data = await createScheduleBulkRequests(payload);
     createdRequests.value = isSingleMode.value ? data.requests || [] : [];
-    message.value = `已创建 ${data.createdCount || 0} 条请求`;
+    if (isSingleMode.value && data.cancelledCount > 0) {
+      message.value = `已创建 ${data.createdCount || 0} 条请求，${data.acceptedCount || 0} 条进入系统，${data.cancelledCount} 条因系统暂无空位取消`;
+    } else {
+      message.value = `已创建 ${data.createdCount || 0} 条请求`;
+    }
     await loadSnapshot(false);
   } catch (error) {
     message.value = `批量创建请求失败：${error.message}`;
@@ -328,7 +335,7 @@ async function loadSnapshot(showMessage = true) {
       modeForm.scheduleMode = scheduleMode.value;
     }
     batchRequiredCount.value = snapshot.batchRequiredCount || 20;
-    lastUpdated.value = new Date().toLocaleTimeString();
+    lastUpdated.value = snapshot.simulatedTime?.displayTime || '-';
     if (showMessage) {
       message.value = '调度快照已刷新';
     }
@@ -369,7 +376,8 @@ function formatRequestStatus(status) {
   const map = {
     WAITING: '等待中',
     CHARGING: '充电中',
-    BATCH_PENDING: '待调度'
+    BATCH_PENDING: '待调度',
+    CANCELLED: '已取消'
   };
   return map[status] || status || '-';
 }

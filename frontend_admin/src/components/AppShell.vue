@@ -21,7 +21,10 @@
           <p>{{ roleLabel }}</p>
           <h2>{{ title }}</h2>
         </div>
-        <strong>{{ auth.username }}</strong>
+        <div class="topbar-right">
+          <span class="sim-time">模拟时间：{{ simulatedTime || '-' }}</span>
+          <strong>{{ auth.username }}</strong>
+        </div>
       </header>
       <slot />
     </main>
@@ -29,8 +32,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { getCurrentTime } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 defineProps({
@@ -42,6 +46,8 @@ defineProps({
 
 const auth = useAuthStore();
 const router = useRouter();
+const simulatedTime = ref('');
+let timeTimer = null;
 
 const roleLabel = computed(() => (auth.role === 'ADMIN' ? '管理员端' : '用户端'));
 const navItems = computed(() => [
@@ -55,4 +61,25 @@ function handleLogout() {
   auth.logout();
   router.push('/login');
 }
+
+async function loadSimulatedTime() {
+  try {
+    const data = await getCurrentTime();
+    simulatedTime.value = data.displayTime || data.currentDateTime || '';
+  } catch (error) {
+    simulatedTime.value = '';
+  }
+}
+
+onMounted(() => {
+  loadSimulatedTime();
+  timeTimer = window.setInterval(loadSimulatedTime, 3000);
+});
+
+onUnmounted(() => {
+  if (timeTimer) {
+    window.clearInterval(timeTimer);
+    timeTimer = null;
+  }
+});
 </script>

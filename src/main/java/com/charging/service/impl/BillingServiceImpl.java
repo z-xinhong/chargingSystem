@@ -13,6 +13,7 @@ import com.charging.mapper.ChargingPileMapper;
 import com.charging.mapper.ChargingRequestMapper;
 import com.charging.mapper.PileQueueMapper;
 import com.charging.service.BillingService;
+import com.charging.service.SimulatedClockService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,9 @@ public class BillingServiceImpl implements BillingService {
 
     @Autowired
     private ChargingPileMapper chargingPileMapper;
+
+    @Autowired
+    private SimulatedClockService simulatedClockService;
 
     @Override
     @Transactional
@@ -195,7 +199,7 @@ public class BillingServiceImpl implements BillingService {
         } else {
             request.setRequestedKwh(remainingKwh);
             request.setStatus("FAULT_STOPPED");
-            request.setCreatedAt(LocalDateTime.now());
+            request.setCreatedAt(simulatedClockService.now());
             chargingRequestMapper.updateById(request);
         }
         return bill;
@@ -215,7 +219,7 @@ public class BillingServiceImpl implements BillingService {
         bill.setElectricityFee(electricityFee);
         bill.setServiceFee(serviceFee);
         bill.setTotalFee(totalFee);
-        bill.setCreatedAt(LocalDateTime.now());
+        bill.setCreatedAt(simulatedClockService.now());
         billMapper.insert(bill);
         return bill;
     }
@@ -227,7 +231,7 @@ public class BillingServiceImpl implements BillingService {
         double requestedKwh = request.getRequestedKwh() == null ? 0 : request.getRequestedKwh();
         long elapsedSeconds = request.getCreatedAt() == null
                 ? 0
-                : Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).getSeconds());
+                : Math.max(0, Duration.between(request.getCreatedAt(), simulatedClockService.now()).getSeconds());
         double chargedBySeconds = elapsedSeconds / 3600.0 * power;
         double actualKwh = roundKwh(Math.min(requestedKwh, chargedBySeconds));
         double durationHours = roundHours(actualKwh / power);
@@ -256,7 +260,7 @@ public class BillingServiceImpl implements BillingService {
             if (request != null && !"COMPLETED".equals(request.getStatus()) && !"CANCELLED".equals(request.getStatus())) {
                 request.setStatus(status);
                 if ("CHARGING".equals(status)) {
-                    request.setCreatedAt(LocalDateTime.now());
+                    request.setCreatedAt(simulatedClockService.now());
                 }
                 chargingRequestMapper.updateById(request);
             }
@@ -292,7 +296,7 @@ public class BillingServiceImpl implements BillingService {
     }
 
     private BigDecimal currentElectricityPrice() {
-        LocalTime now = LocalTime.now();
+        LocalTime now = simulatedClockService.currentTime();
         if (inRange(now, 10, 15) || inRange(now, 18, 21)) {
             return new BigDecimal("1.00");
         }
@@ -314,7 +318,7 @@ public class BillingServiceImpl implements BillingService {
         double power = pile == null || pile.getPower() == null || pile.getPower() <= 0
                 ? ("FAST".equals(request.getMode()) ? 30.0 : 10.0)
                 : pile.getPower();
-        long elapsedSeconds = Math.max(0, Duration.between(request.getCreatedAt(), LocalDateTime.now()).getSeconds());
+        long elapsedSeconds = Math.max(0, Duration.between(request.getCreatedAt(), simulatedClockService.now()).getSeconds());
         long requiredSeconds = Math.max(1L, (long) Math.ceil(request.getRequestedKwh() / power * 3600));
         return elapsedSeconds >= requiredSeconds;
     }

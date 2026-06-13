@@ -195,6 +195,22 @@ th {
   margin-bottom: 24px;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sim-time {
+  border-radius: 6px;
+  background: #e8f3f1;
+  color: #146c63;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .topbar p {
   margin: 0 0 6px;
   color: #657382;

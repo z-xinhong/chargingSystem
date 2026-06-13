@@ -1,13 +1,17 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
+
+import { getCurrentTime } from '../api/user';
 
 const route = useRoute();
 const router = useRouter();
 
 const activeMenu = computed(() => route.path);
 const username = computed(() => sessionStorage.getItem('username') || '用户');
+const simulatedTime = ref('');
+let timeTimer = null;
 
 const menuList = [
   { index: '/home', title: '首页' },
@@ -37,6 +41,28 @@ async function handleLogout() {
     return error;
   }
 }
+
+async function loadSimulatedTime() {
+  try {
+    const res = await getCurrentTime();
+    const data = res.data || {};
+    simulatedTime.value = data.displayTime || data.currentDateTime || '';
+  } catch (error) {
+    simulatedTime.value = '';
+  }
+}
+
+onMounted(() => {
+  loadSimulatedTime();
+  timeTimer = window.setInterval(loadSimulatedTime, 3000);
+});
+
+onUnmounted(() => {
+  if (timeTimer) {
+    window.clearInterval(timeTimer);
+    timeTimer = null;
+  }
+});
 </script>
 
 <template>
@@ -47,6 +73,7 @@ async function handleLogout() {
       </div>
 
       <div class="header-right">
+        <span class="time-text">模拟时间：{{ simulatedTime || '-' }}</span>
         <span class="username-text">当前用户：{{ username }}</span>
         <el-button type="danger" plain @click="handleLogout">退出登录</el-button>
       </div>
@@ -108,6 +135,16 @@ async function handleLogout() {
   gap: 16px;
 }
 
+.time-text {
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .username-text {
   font-size: 14px;
   color: #475569;
@@ -135,13 +172,17 @@ async function handleLogout() {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .layout-header {
     height: auto;
     padding: 16px;
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
+  }
+
+  .header-right {
+    flex-wrap: wrap;
   }
 
   .system-title {

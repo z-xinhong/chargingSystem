@@ -90,7 +90,7 @@ onMounted(fetchRequests);
     <div class="page-header">
       <div>
         <h2 class="page-title">当前排队状态</h2>
-        <p class="page-desc">查看当前账号下所有未结束充电请求的排队进度、状态与预计等待时间。</p>
+        <p class="page-desc">查看当前账号下所有未完成或已取消充电请求的排队进度、状态与预计等待时间。</p>
       </div>
       <el-button type="primary" :loading="loading" @click="fetchRequests">
         刷新状态
@@ -98,7 +98,7 @@ onMounted(fetchRequests);
     </div>
 
     <el-card v-if="!hasRequests && !endResult" class="queue-card" shadow="hover">
-      <el-empty description="当前没有未结束的充电请求，请先提交充电请求" />
+      <el-empty description="当前没有可查看的充电请求，请先提交充电请求" />
     </el-card>
 
     <div v-if="hasRequests" class="request-list">
@@ -111,7 +111,7 @@ onMounted(fetchRequests);
         <div class="toolbar">
           <div class="request-info">
             请求 ID：<strong>{{ request.requestId }}</strong>
-            <span class="queue-number">排队号：{{ request.queueNumber }}</span>
+            <span class="queue-number">排队号：{{ request.queueNumber || '-' }}</span>
           </div>
           <el-button
             v-if="canEndCharging(request)"
@@ -131,6 +131,9 @@ onMounted(fetchRequests);
             <el-tag :type="getStatusTagType(request.status)">
               {{ formatStatus(request.status) }}
             </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="request.message" label="状态说明">
+            {{ request.message }}
           </el-descriptions-item>
           <el-descriptions-item label="请求电量">
             {{ request.requestedKwh ?? '-' }} 度
@@ -197,6 +200,23 @@ onMounted(fetchRequests);
   gap: 20px;
 }
 
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-title {
+  margin: 0 0 8px;
+  color: #111827;
+}
+
+.page-desc {
+  margin: 0;
+  color: #64748b;
+}
+
 .queue-card,
 .result-card {
   border-radius: 16px;
@@ -234,6 +254,7 @@ onMounted(fetchRequests);
 }
 
 @media (max-width: 768px) {
+  .page-header,
   .toolbar {
     flex-direction: column;
     align-items: flex-start;

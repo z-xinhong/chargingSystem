@@ -15,6 +15,7 @@ import com.charging.mapper.WaitingQueueMapper;
 import com.charging.service.BillingService;
 import com.charging.service.FaultService;
 import com.charging.service.ScheduleService;
+import com.charging.service.SimulatedClockService;
 import com.charging.service.SystemConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,9 @@ public class FaultServiceImpl implements FaultService {
     @Autowired
     private SystemConfigService systemConfigService;
 
+    @Autowired
+    private SimulatedClockService simulatedClockService;
+
     @Override
     @Transactional
     public Result simulate(Long pileId, String schedulePolicy, String remark) {
@@ -73,7 +77,7 @@ public class FaultServiceImpl implements FaultService {
 
         FaultLog faultLog = new FaultLog();
         faultLog.setPileId(pileId);
-        faultLog.setFaultTime(LocalDateTime.now());
+        faultLog.setFaultTime(simulatedClockService.now());
         faultLog.setSchedulePolicy(policy);
         faultLog.setRemark(remark);
         faultLogMapper.insert(faultLog);
@@ -183,7 +187,7 @@ public class FaultServiceImpl implements FaultService {
 
         FaultLog faultLog = selectLatestUnrecoveredFault(pileId);
         if (faultLog != null) {
-            faultLog.setRecoverTime(LocalDateTime.now());
+            faultLog.setRecoverTime(simulatedClockService.now());
             faultLog.setSchedulePolicy(policy);
             faultLogMapper.updateById(faultLog);
         }
@@ -354,7 +358,7 @@ public class FaultServiceImpl implements FaultService {
 
         request.setStatus(queueStatus);
         if ("CHARGING".equals(queueStatus)) {
-            request.setCreatedAt(LocalDateTime.now());
+            request.setCreatedAt(simulatedClockService.now());
         }
         chargingRequestMapper.updateById(request);
 
